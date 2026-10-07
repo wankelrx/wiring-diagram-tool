@@ -164,6 +164,18 @@ export function validateDataset(
       const isPigtailEnd = end.connectorId?.endsWith('_PIGTAIL_END')
       if (isPigtailEnd) continue
       
+      // Check if the FROM connector is a pigtail
+      const fromConnector = byId.get(wire.from_connector)
+      const isPigtailWire = fromConnector?.pigtail === true
+      
+      // For pigtail wires, the TO connector and pin are optional
+      if (isPigtailWire && end.label === 'to') {
+        // Skip validation for TO fields on pigtail wires
+        if (!end.connectorId || !end.pin.trim()) {
+          continue
+        }
+      }
+      
       if (!end.connectorId) {
         refErrors.push({
           kind: 'missing_ref',

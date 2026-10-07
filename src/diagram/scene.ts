@@ -590,36 +590,43 @@ export function computeScene(
   for (const pigtail of pigtailConnectors) {
     const hiddenId = `${pigtail.connector_id}_PIGTAIL_END`
     const pigtailWires = wires.filter(
-      (w) => w.from_connector === pigtail.connector_id || w.to_connector === pigtail.connector_id
+      (w) => w.from_connector === pigtail.connector_id
     )
     
     // Create synthetic wires from pigtail connector to hidden end connector
-    const pinMap = new Map<string, Wire>()
     for (const wire of pigtailWires) {
-      const isFrom = wire.from_connector === pigtail.connector_id
-      const pin = isFrom ? wire.from_pin : wire.to_pin
-      pinMap.set(String(pin), wire)
-    }
-    
-    for (const [pin, originalWire] of pinMap) {
+      // If the wire already has a TO connector, skip it (it's a normal wire)
+      if (wire.to_connector && wire.to_connector.trim()) {
+        continue
+      }
+      
+      // For pigtail wires without a TO connector, create a synthetic wire to the hidden end
+      const pin = String(wire.from_pin)
       const syntheticWire: Wire = {
-        wire_id: `${pigtail.connector_id}_PIGTAIL_${pin}`,
+        wire_id: wire.wire_id,
         from_connector: pigtail.connector_id,
         from_pin: pin,
         to_connector: hiddenId,
         to_pin: pin,
-        wire_color: originalWire.wire_color,
-        gauge: originalWire.gauge,
-        signal_name: originalWire.signal_name,
-        twist_group: originalWire.twist_group,
-        shield_group: originalWire.shield_group,
-        overall_shield: originalWire.overall_shield,
+        wire_color: wire.wire_color,
+        gauge: wire.gauge,
+        signal_name: wire.signal_name,
+        twist_group: wire.twist_group,
+        shield_group: wire.shield_group,
+        overall_shield: wire.overall_shield,
       }
       syntheticWires.push(syntheticWire)
     }
   }
   
-  const allWires = [...wires, ...syntheticWires]
+  // Filter out pigtail wires without TO connectors from the original wires list
+  const nonPigtailWires = wires.filter((w) => {
+    const fromConnector = connectors.find((c) => c.connector_id === w.from_connector)
+    const isPigtailWire = fromConnector?.pigtail === true && (!w.to_connector || !w.to_connector.trim())
+    return !isPigtailWire
+  })
+  
+  const allWires = [...nonPigtailWires, ...syntheticWires]
   const layout = computeLayout(connectors, allWires)
   type Routed = {
     wire: Wire
