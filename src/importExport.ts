@@ -9,6 +9,9 @@ export const CONNECTOR_HEADERS = [
   'pin_count',
   'position_x',
   'position_y',
+  'pigtail',
+  'pigtail_length',
+  'pigtail_shield_to_body',
 ] as const
 
 export const WIRE_HEADERS = [
@@ -23,6 +26,7 @@ export const WIRE_HEADERS = [
   'twist_group',
   'shield_group',
   'overall_shield',
+  'shield_pin',
 ] as const
 
 export type SheetAoa = {
@@ -57,6 +61,14 @@ function optionalNumber(value: unknown): number | undefined {
   if (!raw) return undefined
   const n = Number(raw)
   return Number.isFinite(n) ? n : undefined
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  const raw = cell(value).toLowerCase()
+  if (!raw) return undefined
+  if (['true', 'yes', 'y', '1', 'x'].includes(raw)) return true
+  if (['false', 'no', 'n', '0'].includes(raw)) return false
+  return undefined
 }
 
 function normalizeHeader(value: unknown): string {
@@ -96,6 +108,13 @@ function parseConnectors(rows: Record<string, unknown>[]): Connector[] {
       pin_count: Number(row.pin_count) || 0,
       position_x: optionalNumber(row.position_x),
       position_y: optionalNumber(row.position_y),
+      ...(optionalBoolean(row.pigtail) ? { pigtail: true } : {}),
+      ...(optionalNumber(row.pigtail_length) !== undefined
+        ? { pigtail_length: optionalNumber(row.pigtail_length) }
+        : {}),
+      ...(optionalBoolean(row.pigtail_shield_to_body)
+        ? { pigtail_shield_to_body: true }
+        : {}),
     }))
 }
 
@@ -119,6 +138,7 @@ function parseWires(rows: Record<string, unknown>[]): Wire[] {
       twist_group: cell(row.twist_group) || undefined,
       shield_group: cell(row.shield_group) || undefined,
       overall_shield: cell(row.overall_shield) || undefined,
+      shield_pin: cell(row.shield_pin) || undefined,
     }))
 }
 
@@ -314,6 +334,7 @@ function wireRows(wires: Wire[]): unknown[][] {
       wire.twist_group ?? '',
       wire.shield_group ?? '',
       wire.overall_shield ?? '',
+      wire.shield_pin ?? '',
     ]),
   ]
 }
@@ -339,13 +360,13 @@ export async function downloadTemplate() {
     [
       {
         name: 'Connectors',
-        rows: [[...CONNECTOR_HEADERS], ['J1', 'Motor Controller', 8, 420, 70]],
+        rows: [[...CONNECTOR_HEADERS], ['J1', 'Motor Controller', 8, 420, 70, '', '', '']],
       },
       {
         name: 'Wires',
         rows: [
           [...WIRE_HEADERS],
-          ['W1', 'J1', '1', 'J2', '1', 'red', '22 AWG', '+24V', '', ''],
+          ['W1', 'J1', '1', 'J2', '1', 'red', '22 AWG', '+24V', '', '', '', ''],
         ],
       },
     ],

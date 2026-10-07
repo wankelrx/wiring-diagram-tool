@@ -1,3 +1,11 @@
+import {
+  hasShieldPin,
+  isPigtailEndId,
+  pigtailBaseId,
+  pigtailEndId,
+  pigtailLength,
+  SHIELD_PIN,
+} from '../pigtail'
 import type { Connector, Wire } from '../types'
 import { pinLabelsFor, pinSignalMap } from '../validation'
 
@@ -9,6 +17,10 @@ export const PIN_PAD = 8
 const NUM_INSET = 16
 const SIG_INSET = 30
 const EDGE_PAD = 14
+/** Room kept clear on each side of the header text for the SHLD pin label. */
+const SHIELD_LABEL_PAD = 30
+/** The hidden free end of a pigtail occupies no visible space. */
+const PIGTAIL_END_WIDTH = 2
 
 export type PinSide = 'left' | 'right'
 export type SignalAnchor = 'start' | 'end'
@@ -47,7 +59,9 @@ function connectorWidth(
     Math.max(
       approxTextWidth(connector.connector_name || connector.connector_id, 12),
       approxTextWidth(connector.connector_id, 10),
-    ) + 24
+    ) +
+    24 +
+    (hasShieldPin(connector) ? SHIELD_LABEL_PAD * 2 : 0)
   return Math.min(
     BOX_MAX_WIDTH,
     Math.max(BOX_WIDTH, Math.ceil(rowNeed), Math.ceil(headerNeed)),
@@ -114,23 +128,19 @@ export function computeLayout(
   connectors: Connector[],
   wires: Wire[],
 ): LayoutResult {
-  // Create hidden connectors for pigtails
-  const hiddenConnectors: Connector[] = []
-  const pigtailConnectors = connectors.filter((c) => c.pigtail)
-  
-  for (const pigtail of pigtailConnectors) {
-    const hiddenId = `${pigtail.connector_id}_PIGTAIL_END`
-    const hiddenConnector: Connector = {
-      connector_id: hiddenId,
-      connector_name: 'Pigtail End',
-      pin_count: pigtail.pin_count,
-    }
-    hiddenConnectors.push(hiddenConnector)
-  }
-  
+  // Every pigtail gets an invisible far end so its wires have somewhere to run.
+  const hiddenConnectors: Connector[] = connectors
+    .filter((c) => c.pigtail)
+    .map((c) => ({
+      connector_id: pigtailEndId(c.connector_id),
+      connector_name: 'Pigtail end',
+      pin_count: c.pin_count,
+    }))
+
   const allConnectors = [...connectors, ...hiddenConnectors]
   const ordered = connectionOrder(allConnectors, wires)
-  const cols = Math.max(1, Math.min(ordered.length, 3))
+  const realCount = ordered.filter((c) => !isPigtailEndId(c.connector_id)).length
+  const cols = Math.max(1, Math.min(realCount, 3))
   const colW = 480
   const startX = 64
   const startY = 80
@@ -138,20 +148,26 @@ export function computeLayout(
   // Per-column cursors so auto-placed boxes of varying height never overlap.
   const colBottoms = new Array<number>(cols).fill(startY)
 
-  // First pass: place regular connectors
-  const placed: ConnectorLayout[] = ordered.map((connector, index) => {
+  let realIndex = 0
+  const placed: ConnectorLayout[] = ordered.map((connector) => {
+    const hidden = isPigtailEndId(connector.connector_id)
     const hasX = connector.position_x !== undefined && connector.position_x !== null
     const hasY = connector.position_y !== undefined && connector.position_y !== null
-    const col = index % cols
+    const col = hidden ? 0 : realIndex++ % cols
     const labels = pinLabelsFor(connector, wires)
     const signals = pinSignalMap(connector, wires)
     const height = connectorHeight(labels.length)
-    const width = connectorWidth(connector, labels, signals)
-    
+    const width = hidden
+      ? PIGTAIL_END_WIDTH
+      : connectorWidth(connector, labels, signals)
+
+    // Hidden ends are positioned from their pigtail once the real boxes settle.
     const x = hasX ? Number(connector.position_x) : startX + col * colW
     let y: number
     if (hasY) {
       y = Number(connector.position_y)
+    } else if (hidden) {
+      y = 0
     } else {
       y = colBottoms[col]!
       colBottoms[col] = y + height + CONNECTOR_GAP
@@ -166,31 +182,28 @@ export function computeLayout(
       pins: [],
     }
   })
-  
-  // Second pass: position hidden pigtail connectors
-  for (const layout of placed) {
-    const isPigtailEnd = layout.connector.connector_id.endsWith('_PIGTAIL_END')
-    if (isPigtailEnd) {
-      const originalId = layout.connector.connector_id.replace('_PIGTAIL_END', '')
-      const originalConnector = placed.find((c) => c.connector.connector_id === originalId)
-      if (originalConnector) {
-        const pigtailLength = originalConnector.connector.pigtail_length ?? 100
-        layout.x = originalConnector.x + originalConnector.width + pigtailLength
-        layout.y = originalConnector.y
-        layout.pinSide = 'left'
-      }
-    }
-  }
 
+  // The free end is not a real part: keep it out of collision and spacing
+  // rules so the pigtail length is exactly what the user typed.
+  const solid = placed.filter((c) => !isPigtailEndId(c.connector.connector_id))
   for (let pass = 0; pass < 3; pass++) {
-    resolveConnectorCollisions(placed, CONNECTOR_MARGIN)
-    if (!enforceWiredGaps(placed, wires)) break
+    resolveConnectorCollisions(solid, CONNECTOR_MARGIN)
+    if (!enforceWiredGaps(solid, wires)) break
+  }
+  for (const end of placed) {
+    if (!isPigtailEndId(end.connector.connector_id)) continue
+    const base = placed.find(
+      (c) => c.connector.connector_id === pigtailBaseId(end.connector.connector_id),
+    )
+    if (!base) continue
+    end.x = base.x + base.width + pigtailLength(base.connector)
+    end.y = base.y
   }
 
   const byId = new Map(placed.map((c) => [c.connector.connector_id, c]))
   const avgX =
-    placed.reduce((sum, c) => sum + c.x + c.width / 2, 0) /
-    Math.max(placed.length, 1)
+    solid.reduce((sum, c) => sum + c.x + c.width / 2, 0) /
+    Math.max(solid.length, 1)
 
   // Default face: toward the diagram center / neighbor cluster.
   for (const layout of placed) {
@@ -263,6 +276,31 @@ export function computeLayout(
         dir,
       }
     })
+
+    const wired = layout.pins.find((p) => p.pin !== SHIELD_PIN)
+    if (
+      hasShieldPin(layout.connector) &&
+      !layout.pins.some((p) => p.pin === SHIELD_PIN)
+    ) {
+      // Shield drain pin rides in the header, above every conductor, on the
+      // same face the wires leave from.
+      const side = wired?.side ?? layout.pinSide
+      const dir = side === 'right' ? 1 : -1
+      const pinX = side === 'right' ? layout.x + layout.width : layout.x
+      const y = layout.y + HEADER_H / 2
+      layout.pins.push({
+        pin: SHIELD_PIN,
+        signal: '',
+        x: pinX,
+        y,
+        labelX: pinX - dir * (NUM_INSET + 6),
+        labelY: y,
+        signalX: pinX - dir * SIG_INSET,
+        signalAnchor: (side === 'right' ? 'end' : 'start') as SignalAnchor,
+        side,
+        dir,
+      })
+    }
   }
 
   let minX = Infinity

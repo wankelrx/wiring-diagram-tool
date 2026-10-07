@@ -1,4 +1,5 @@
 import { isKnownWireColor } from './colors'
+import { hasShieldPin, isPigtailEndId, openEndOf, SHIELD_PIN } from './pigtail'
 import type { Connector, PinoutRow, ValidationError, Wire } from './types'
 
 export function pinKey(connectorId: string, pin: string): string {
@@ -159,23 +160,12 @@ export function validateDataset(
         label: 'to',
       },
     ]
+    const open = openEndOf(wire, byId)
     for (const end of ends) {
-      // Skip validation for pigtail end connectors as they're virtual
-      const isPigtailEnd = end.connectorId?.endsWith('_PIGTAIL_END')
-      if (isPigtailEnd) continue
-      
-      // Check if the FROM connector is a pigtail
-      const fromConnector = byId.get(wire.from_connector)
-      const isPigtailWire = fromConnector?.pigtail === true
-      
-      // For pigtail wires, the TO connector and pin are optional
-      if (isPigtailWire && end.label === 'to') {
-        // Skip validation for TO fields on pigtail wires
-        if (!end.connectorId || !end.pin.trim()) {
-          continue
-        }
-      }
-      
+      if (isPigtailEndId(end.connectorId ?? '')) continue
+      // A pigtail's free end is implied, so its blank side is not an error.
+      if (open && end.label === open.open) continue
+
       if (!end.connectorId) {
         refErrors.push({
           kind: 'missing_ref',
@@ -223,24 +213,15 @@ export function validateDataset(
 
   const usage = new Map<string, string[]>()
   for (const wire of wires) {
-    const fromConnector = byId.get(wire.from_connector)
-    const isPigtailWire = fromConnector?.pigtail === true
-    
+    const open = openEndOf(wire, byId)
     const keys: string[] = []
-    
-    // Always add FROM key if connector exists
-    if (wire.from_connector && String(wire.from_pin).trim()) {
+    if (open?.open !== 'from' && wire.from_connector && String(wire.from_pin ?? '').trim()) {
       keys.push(pinKey(wire.from_connector, String(wire.from_pin)))
     }
-    
-    // Only add TO key if not a pigtail wire OR if TO fields are actually filled in
-    if (wire.to_connector && String(wire.to_pin).trim()) {
-      // Skip if this is a pigtail wire with empty TO fields
-      if (!isPigtailWire || wire.to_connector.trim()) {
-        keys.push(pinKey(wire.to_connector, String(wire.to_pin)))
-      }
+    if (open?.open !== 'to' && wire.to_connector && String(wire.to_pin ?? '').trim()) {
+      keys.push(pinKey(wire.to_connector, String(wire.to_pin)))
     }
-    
+
     for (const key of keys) {
       const list = usage.get(key) ?? []
       list.push(wire.wire_id)
@@ -268,6 +249,27 @@ export function validateDataset(
   }
 
   for (const wire of wires) {
+    const shieldPin = wire.shield_pin?.trim()
+    if (shieldPin) {
+      const open = openEndOf(wire, byId)
+      const pigtail = open ? byId.get(open.connectorId) : undefined
+      if (!pigtail) {
+        warnings.push({
+          kind: 'warning',
+          message: `Wire ${wire.wire_id || '(unnamed)'} has a shield pin, which only applies to pigtail wires`,
+          wire_id: wire.wire_id,
+        })
+      } else if (
+        shieldPin !== SHIELD_PIN &&
+        !pinSets.get(pigtail.connector_id)?.has(shieldPin)
+      ) {
+        warnings.push({
+          kind: 'warning',
+          message: `Wire ${wire.wire_id || '(unnamed)'} shield pin "${shieldPin}" is not on ${pigtail.connector_id}`,
+          wire_id: wire.wire_id,
+        })
+      }
+    }
     if (wire.wire_color.trim() && !isKnownWireColor(wire.wire_color)) {
       warnings.push({
         kind: 'warning',
@@ -328,13 +330,12 @@ export function pinoutRows(connector: Connector, wires: Wire[]): PinoutRow[] {
         (w.to_connector === connector.connector_id && String(w.to_pin) === pin),
     )
     const mates = related.map((w) => {
-      if (
-        w.from_connector === connector.connector_id &&
-        String(w.from_pin) === pin
-      ) {
-        return `${w.to_connector}:${w.to_pin}`
-      }
-      return `${w.from_connector}:${w.from_pin}`
+      const fromHere =
+        w.from_connector === connector.connector_id && String(w.from_pin) === pin
+      const otherConnector = fromHere ? w.to_connector : w.from_connector
+      const otherPin = fromHere ? w.to_pin : w.from_pin
+      if (!String(otherConnector ?? '').trim()) return 'open end'
+      return `${otherConnector}:${otherPin}`
     })
     rows.push({
       pin,
@@ -343,6 +344,23 @@ export function pinoutRows(connector: Connector, wires: Wire[]): PinoutRow[] {
       gauge: related.map((w) => w.gauge).filter(Boolean).join(', ') || '-',
       mates: mates.join(', ') || '-',
       wireIds: related.map((w) => w.wire_id),
+    })
+  }
+  if (hasShieldPin(connector)) {
+    const shielded = wires.filter(
+      (w) =>
+        openEndOf(w, new Map([[connector.connector_id, connector]]))
+          ?.connectorId === connector.connector_id &&
+        !w.shield_pin?.trim() &&
+        (w.shield_group?.trim() || w.overall_shield?.trim()),
+    )
+    rows.push({
+      pin: SHIELD_PIN,
+      signal: 'Shield drain',
+      color: '-',
+      gauge: '-',
+      mates: 'shield',
+      wireIds: shielded.map((w) => w.wire_id),
     })
   }
   return rows

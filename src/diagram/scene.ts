@@ -1,5 +1,14 @@
 import { isLightColor, resolveWireColor } from '../colors'
 import { DEFAULT_DRAWING_META } from '../documentMeta'
+import {
+  hasShieldPin,
+  isPigtailEndId,
+  openEndOf,
+  pigtailBaseId,
+  pigtailEndId,
+  shieldPinFor,
+  SHIELD_PIN,
+} from '../pigtail'
 import type { Connector, DrawingMeta, Wire } from '../types'
 import { TITLE_BLOCK_H } from './titleBlock'
 import { computeLayout, findPin, type LayoutResult } from './layout'
@@ -42,6 +51,8 @@ export type SceneConnector = {
     signalX: number
     signalAnchor: 'start' | 'end'
     error: boolean
+    /** The SHLD drain pin added to pigtail connectors. */
+    shield: boolean
   }>
 }
 
@@ -78,12 +89,17 @@ export type SceneShield = {
   outlinePath: string
   /** Inner pair/foil shield vs outer cable jacket shield. */
   kind: 'pair' | 'overall'
-  /** For pigtail connectors: point on shield outline where connection starts */
-  connectionStartPoint?: Point
-  /** For pigtail connectors: point on connector body where shield connects */
-  connectionEndPoint?: Point
-  /** For pigtail connectors: connector ID where shield terminates */
-  terminationConnectorId?: string
+}
+
+/** Right-angle drain line from a shield outline to the pin it terminates on. */
+export type SceneShieldLink = {
+  id: string
+  kind: 'pair' | 'overall'
+  /** Ordered from the connector pin out to the shield outline. */
+  points: Point[]
+  path: string
+  pin: Point
+  anchor: Point
 }
 
 export type SceneFrame = {
@@ -106,6 +122,7 @@ export type Scene = {
   wires: SceneWire[]
   bundles: SceneBundle[]
   shields: SceneShield[]
+  shieldLinks: SceneShieldLink[]
   frame: SceneFrame
   minX: number
   minY: number
@@ -584,55 +601,73 @@ function expandBox(
   box.maxY = Math.max(box.maxY, y + pad)
 }
 
+/**
+ * Right-angle drain line from a connector pin out to a shield outline. A pin
+ * level with the shield runs straight in to its end cap; a pin above or below
+ * runs along its own row, then turns once onto the nearest outline corner.
+ * Points run pin first, shield last.
+ */
+function shieldLinkRoute(
+  outline: Point[],
+  pin: { x: number; y: number; dir: number },
+): Point[] | null {
+  if (outline.length < 2) return null
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const p of outline) {
+    minX = Math.min(minX, p.x)
+    maxX = Math.max(maxX, p.x)
+    minY = Math.min(minY, p.y)
+    maxY = Math.max(maxY, p.y)
+  }
+  const start = { x: pin.x, y: pin.y }
+  const facingX = pin.dir > 0 ? minX : maxX
+  const level = pin.y > minY + 1 && pin.y < maxY - 1
+  const gap = (facingX - pin.x) * pin.dir
+  if (level) {
+    return gap < 4 ? null : [start, { x: facingX, y: pin.y }]
+  }
+  const edgeY = pin.y <= minY + 1 ? minY : maxY
+  if (gap < 14) {
+    // Shield starts right at the connector face: step out, then run along the
+    // shield's top or bottom edge.
+    const stubX = pin.x + pin.dir * 12
+    if (stubX < minX || stubX > maxX) return null
+    return dedupePoints([start, { x: stubX, y: pin.y }, { x: stubX, y: edgeY }])
+  }
+  let corner = outline[0]!
+  let best = Infinity
+  for (const p of outline) {
+    const d = Math.abs(p.x - facingX) + Math.abs(p.y - edgeY)
+    if (d < best) {
+      best = d
+      corner = p
+    }
+  }
+  return dedupePoints([start, { x: corner.x, y: pin.y }, { ...corner }])
+}
+
 export function computeScene(
   connectors: Connector[],
   wires: Wire[],
   options: SceneOptions,
 ): Scene {
-  // Create synthetic wires for pigtail connectors
-  const syntheticWires: Wire[] = []
-  const pigtailConnectors = connectors.filter((c) => c.pigtail)
-  
-  for (const pigtail of pigtailConnectors) {
-    const hiddenId = `${pigtail.connector_id}_PIGTAIL_END`
-    const pigtailWires = wires.filter(
-      (w) => w.from_connector === pigtail.connector_id
-    )
-    
-    // Create synthetic wires from pigtail connector to hidden end connector
-    for (const wire of pigtailWires) {
-      // If the wire already has a TO connector, skip it (it's a normal wire)
-      if (wire.to_connector && wire.to_connector.trim()) {
-        continue
-      }
-      
-      // For pigtail wires without a TO connector, create a synthetic wire to the hidden end
-      const pin = String(wire.from_pin)
-      const syntheticWire: Wire = {
-        wire_id: wire.wire_id,
-        from_connector: pigtail.connector_id,
-        from_pin: pin,
-        to_connector: hiddenId,
-        to_pin: pin,
-        wire_color: wire.wire_color,
-        gauge: wire.gauge,
-        signal_name: wire.signal_name,
-        twist_group: wire.twist_group,
-        shield_group: wire.shield_group,
-        overall_shield: wire.overall_shield,
-      }
-      syntheticWires.push(syntheticWire)
+  // A wire with one blank end on a pigtail runs out to that pigtail's hidden
+  // free end, straight across at the pigtail length.
+  const connectorById = new Map(connectors.map((c) => [c.connector_id, c]))
+  const allWires: Wire[] = wires.map((wire) => {
+    const open = openEndOf(wire, connectorById)
+    if (!open) return wire
+    return {
+      ...wire,
+      from_connector: open.connectorId,
+      from_pin: open.pin,
+      to_connector: pigtailEndId(open.connectorId),
+      to_pin: open.pin,
     }
-  }
-  
-  // Filter out pigtail wires without TO connectors from the original wires list
-  const nonPigtailWires = wires.filter((w) => {
-    const fromConnector = connectors.find((c) => c.connector_id === w.from_connector)
-    const isPigtailWire = fromConnector?.pigtail === true && (!w.to_connector || !w.to_connector.trim())
-    return !isPigtailWire
   })
-  
-  const allWires = [...nonPigtailWires, ...syntheticWires]
   const layout = computeLayout(connectors, allWires)
   type Routed = {
     wire: Wire
@@ -717,8 +752,45 @@ export function computeScene(
   const priorRoutes: Point[][] = []
   const reserved: RouteChannels = { vertical: [], horizontal: [] }
 
+  const shieldLinks: SceneShieldLink[] = []
+  const pigtailForBundle = (bundleId: string): Connector | undefined => {
+    for (const end of bundleId.split('--')) {
+      const base = connectorById.get(pigtailBaseId(end))
+      if (base?.pigtail) return base
+    }
+    return undefined
+  }
+  // Shields terminate on the pigtail's SHLD pin, or on a wire's chosen pin.
+  const linkShield = (
+    id: string,
+    kind: 'pair' | 'overall',
+    outline: Point[],
+    group: Routed[],
+    pigtail: Connector | undefined,
+  ) => {
+    if (!pigtail) return
+    const pigtailLayout = layout.byId.get(pigtail.connector_id)
+    if (!pigtailLayout) return
+    const chosen = shieldPinFor(group.map((row) => row.wire))
+    const pin =
+      (chosen ? findPin(pigtailLayout, chosen) : undefined) ??
+      (hasShieldPin(pigtail) ? findPin(pigtailLayout, SHIELD_PIN) : undefined)
+    if (!pin) return
+    const points = shieldLinkRoute(outline, pin)
+    if (!points) return
+    shieldLinks.push({
+      id,
+      kind,
+      points,
+      path: polylinePath(points),
+      pin: points[0]!,
+      anchor: points[points.length - 1]!,
+    })
+  }
+
   for (const [id, members] of bundles) {
     const [endA, endB] = id.split('--')
+    const bundlePigtail = pigtailForBundle(id)
     const bundleExclude = [
       endA ? obstacleById.get(endA) : undefined,
       endB ? obstacleById.get(endB) : undefined,
@@ -1067,7 +1139,11 @@ export function computeScene(
         id,
         points: centroid,
         path: polylinePath(centroid),
-        label: `${left}–${right} · ${members.length} cond.`,
+        label: `${
+          bundlePigtail
+            ? `${bundlePigtail.connector_id} pigtail`
+            : `${left}–${right}`
+        } · ${members.length} cond.`,
         labelX,
         labelY,
         strokeWidth: 6 + members.length * 0.4,
@@ -1104,72 +1180,16 @@ export function computeScene(
       if (!envelope) continue
       pairHalfWidth.set(shieldId, envelope.halfWidth)
       pairTube.set(shieldId, envelope.tube)
-      
-      // Check if this is a pigtail connector with shield-to-body enabled
-      const [leftId, rightId] = id.split('--')
-      const leftConnector = connectors.find((c) => c.connector_id === leftId)
-      const rightConnector = connectors.find((c) => c.connector_id === rightId)
-      const pigtailConnector = leftConnector?.pigtail ? leftConnector : rightConnector?.pigtail ? rightConnector : null
-      
-      let connectionStartPoint: Point | undefined
-      let connectionEndPoint: Point | undefined
-      let terminationConnectorId: string | undefined
-      
-      if (pigtailConnector?.pigtail_shield_to_body && envelope.outline.length >= 2) {
-        // Find the connector layout for the pigtail
-        const connectorLayout = layout.byId.get(pigtailConnector.connector_id)
-        if (connectorLayout) {
-          // Find the corner of the shield outline closest to the connector
-          let closestPoint = envelope.outline[0]!
-          let minDist = Infinity
-          
-          const connectorCenterX = connectorLayout.x + connectorLayout.width / 2
-          const connectorCenterY = connectorLayout.y + connectorLayout.height / 2
-          
-          for (const point of envelope.outline) {
-            const dist = Math.hypot(
-              point.x - connectorCenterX,
-              point.y - connectorCenterY
-            )
-            if (dist < minDist) {
-              minDist = dist
-              closestPoint = point
-            }
-          }
-          
-          connectionStartPoint = closestPoint
-          
-          // Create a shield pin on the connector body
-          // Position it on the edge of the connector closest to the shield
-          const dx = closestPoint.x - connectorCenterX
-          const dy = closestPoint.y - connectorCenterY
-          const angle = Math.atan2(dy, dx)
-          
-          // Place the shield connection point on the edge of the connector
-          const edgeX = connectorCenterX + Math.cos(angle) * (connectorLayout.width / 2)
-          const edgeY = connectorCenterY + Math.sin(angle) * (connectorLayout.height / 2)
-          
-          // Clamp to connector bounds
-          connectionEndPoint = {
-            x: Math.max(connectorLayout.x, Math.min(connectorLayout.x + connectorLayout.width, edgeX)),
-            y: Math.max(connectorLayout.y, Math.min(connectorLayout.y + connectorLayout.height, edgeY))
-          }
-          
-          terminationConnectorId = pigtailConnector.connector_id
-        }
-      }
-      
+      const pairId = `${id}::${shieldId}`
       sceneShields.push({
-        id: `${id}::${shieldId}`,
+        id: pairId,
         points: envelope.tube,
         path: polylinePath(envelope.tube),
         outline: envelope.outline,
         outlinePath: polylinePath(envelope.outline),
         kind: 'pair',
-        connectionStartPoint,
-        connectionEndPoint,
-        terminationConnectorId,
       })
+      linkShield(pairId, 'pair', envelope.outline, group, bundlePigtail)
     }
 
     const overallGroups = groupBy(
@@ -1210,72 +1230,16 @@ export function computeScene(
           .flatMap((w) => [w.points[0]!, w.points[w.points.length - 1]!]),
       )
       if (!envelope) continue
-      
-      // Check if this is a pigtail connector with shield-to-body enabled
-      const [leftId, rightId] = id.split('--')
-      const leftConnector = connectors.find((c) => c.connector_id === leftId)
-      const rightConnector = connectors.find((c) => c.connector_id === rightId)
-      const pigtailConnector = leftConnector?.pigtail ? leftConnector : rightConnector?.pigtail ? rightConnector : null
-      
-      let connectionStartPoint: Point | undefined
-      let connectionEndPoint: Point | undefined
-      let terminationConnectorId: string | undefined
-      
-      if (pigtailConnector?.pigtail_shield_to_body && envelope.outline.length >= 2) {
-        // Find the connector layout for the pigtail
-        const connectorLayout = layout.byId.get(pigtailConnector.connector_id)
-        if (connectorLayout) {
-          // Find the corner of the shield outline closest to the connector
-          let closestPoint = envelope.outline[0]!
-          let minDist = Infinity
-          
-          const connectorCenterX = connectorLayout.x + connectorLayout.width / 2
-          const connectorCenterY = connectorLayout.y + connectorLayout.height / 2
-          
-          for (const point of envelope.outline) {
-            const dist = Math.hypot(
-              point.x - connectorCenterX,
-              point.y - connectorCenterY
-            )
-            if (dist < minDist) {
-              minDist = dist
-              closestPoint = point
-            }
-          }
-          
-          connectionStartPoint = closestPoint
-          
-          // Create a shield pin on the connector body
-          // Position it on the edge of the connector closest to the shield
-          const dx = closestPoint.x - connectorCenterX
-          const dy = closestPoint.y - connectorCenterY
-          const angle = Math.atan2(dy, dx)
-          
-          // Place the shield connection point on the edge of the connector
-          const edgeX = connectorCenterX + Math.cos(angle) * (connectorLayout.width / 2)
-          const edgeY = connectorCenterY + Math.sin(angle) * (connectorLayout.height / 2)
-          
-          // Clamp to connector bounds
-          connectionEndPoint = {
-            x: Math.max(connectorLayout.x, Math.min(connectorLayout.x + connectorLayout.width, edgeX)),
-            y: Math.max(connectorLayout.y, Math.min(connectorLayout.y + connectorLayout.height, edgeY))
-          }
-          
-          terminationConnectorId = pigtailConnector.connector_id
-        }
-      }
-      
+      const overallShieldId = `${id}::overall::${overallId}`
       sceneShields.push({
-        id: `${id}::overall::${overallId}`,
+        id: overallShieldId,
         points: envelope.tube,
         path: polylinePath(envelope.tube),
         outline: envelope.outline,
         outlinePath: polylinePath(envelope.outline),
         kind: 'overall',
-        connectionStartPoint,
-        connectionEndPoint,
-        terminationConnectorId,
       })
+      linkShield(overallShieldId, 'overall', envelope.outline, group, bundlePigtail)
     }
   }
 
@@ -1328,7 +1292,7 @@ export function computeScene(
   }
 
   const sceneConnectors: SceneConnector[] = layout.connectors
-    .filter((c) => !c.connector.connector_id.endsWith('_PIGTAIL_END'))
+    .filter((c) => !isPigtailEndId(c.connector.connector_id))
     .map((c) => ({
       id: c.connector.connector_id,
       name: c.connector.connector_name,
@@ -1346,6 +1310,8 @@ export function computeScene(
         signalX: p.signalX,
         signalAnchor: p.signalAnchor,
         error: options.duplicatePins.has(`${c.connector.connector_id}:${p.pin}`),
+        shield:
+          p.pin === SHIELD_PIN && hasShieldPin(c.connector),
       })),
     }))
 
@@ -1367,6 +1333,9 @@ export function computeScene(
   }
   for (const s of sceneShields) {
     for (const p of s.outline) expandBox(box, p.x, p.y, 4)
+  }
+  for (const link of shieldLinks) {
+    for (const p of link.points) expandBox(box, p.x, p.y, 4)
   }
   if (!Number.isFinite(box.minX)) {
     box.minX = 0
@@ -1402,6 +1371,7 @@ export function computeScene(
     wires: sceneWires,
     bundles: sceneBundles,
     shields: sceneShields,
+    shieldLinks,
     frame,
     minX,
     minY,

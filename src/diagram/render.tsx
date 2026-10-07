@@ -155,28 +155,6 @@ export function DiagramSvg({
               strokeLinejoin="round"
               strokeDasharray={overall ? '14 5 3 5' : '6 4'}
             />
-            {shield.connectionStartPoint && shield.connectionEndPoint && (
-              <g>
-                {/* Connection line from shield to connector body */}
-                <line
-                  x1={shield.connectionStartPoint.x}
-                  y1={shield.connectionStartPoint.y}
-                  x2={shield.connectionEndPoint.x}
-                  y2={shield.connectionEndPoint.y}
-                  stroke={overall ? theme.overallShieldStroke : theme.shieldStroke}
-                  strokeWidth={overall ? 2.25 : 1.25}
-                  strokeLinecap="round"
-                  strokeDasharray={overall ? '14 5 3 5' : '6 4'}
-                />
-                {/* Shield connection pin marker */}
-                <circle
-                  cx={shield.connectionEndPoint.x}
-                  cy={shield.connectionEndPoint.y}
-                  r={3}
-                  fill={overall ? theme.overallShieldStroke : theme.shieldStroke}
-                />
-              </g>
-            )}
           </g>
         )
       })}
@@ -310,8 +288,14 @@ export function DiagramSvg({
                   cx={pin.x}
                   cy={pin.y}
                   r={4.5}
-                  fill={pin.error ? theme.error : theme.pinFill}
-                  stroke={pin.error ? theme.error : theme.pinStroke}
+                  fill={
+                    pin.error
+                      ? theme.error
+                      : pin.shield
+                        ? theme.shieldStroke
+                        : theme.pinFill
+                  }
+                  stroke={pin.error ? theme.error : pin.shield ? theme.shieldStroke : theme.pinStroke}
                   strokeWidth={1.35}
                 />
                 <text
@@ -338,6 +322,26 @@ export function DiagramSvg({
                 ) : null}
               </g>
             ))}
+          </g>
+        )
+      })}
+
+      {scene.shieldLinks.map((link) => {
+        const overall = link.kind === 'overall'
+        const stroke = overall ? theme.overallShieldStroke : theme.shieldStroke
+        return (
+          <g key={`shield-link-${link.id}`} pointerEvents="none">
+            <path
+              d={link.path}
+              fill="none"
+              stroke={stroke}
+              strokeWidth={overall ? 2.25 : 1.5}
+              strokeLinecap="round"
+              strokeLinejoin="miter"
+              strokeDasharray={overall ? '14 5 3 5' : '6 4'}
+            />
+            <circle cx={link.pin.x} cy={link.pin.y} r={2.6} fill={stroke} />
+            <circle cx={link.anchor.x} cy={link.anchor.y} r={2.6} fill={stroke} />
           </g>
         )
       })}

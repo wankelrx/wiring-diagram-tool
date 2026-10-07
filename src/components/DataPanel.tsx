@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { resolveWireColor } from '../colors'
 import type { Connector, DrawingMeta, ValidationError, Wire } from '../types'
+import { DEFAULT_PIGTAIL_LENGTH, hasShieldPin, SHIELD_PIN } from '../pigtail'
 import { firstFreePin, firstFreePins } from '../validation'
 import { Icon } from './icons'
 
@@ -91,9 +92,18 @@ function SectionHeader({
   )
 }
 
-function Th({ children, className }: { children?: ReactNode; className?: string }) {
+function Th({
+  children,
+  className,
+  title,
+}: {
+  children?: ReactNode
+  className?: string
+  title?: string
+}) {
   return (
     <th
+      title={title}
       className={`sticky top-0 z-10 whitespace-nowrap bg-slate-50 px-1.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:bg-slate-900 dark:text-slate-400 ${className ?? ''}`}
     >
       {children}
@@ -129,20 +139,32 @@ type WireColumn = {
   invalidates?: boolean
   mono?: boolean
   swatch?: boolean
+  hint?: string
+  /** Placeholder shown when the wire runs from a pigtail and this end is blank. */
+  pigtailPlaceholder?: (pigtail: Connector) => string
 }
 
 const WIRE_COLUMNS: WireColumn[] = [
   { label: 'ID', width: 56, get: (w) => w.wire_id, set: (v) => ({ wire_id: v }), invalidates: true, mono: true },
   { label: 'From', width: 58, get: (w) => w.from_connector, set: (v) => ({ from_connector: v }), invalidates: true, mono: true },
   { label: 'Pin', width: 46, get: (w) => String(w.from_pin), set: (v) => ({ from_pin: v }), invalidates: true, mono: true },
-  { label: 'To', width: 58, get: (w) => w.to_connector, set: (v) => ({ to_connector: v }), invalidates: true, mono: true },
-  { label: 'Pin', width: 46, get: (w) => String(w.to_pin), set: (v) => ({ to_pin: v }), invalidates: true, mono: true },
+  { label: 'To', width: 58, get: (w) => w.to_connector, set: (v) => ({ to_connector: v }), invalidates: true, mono: true, pigtailPlaceholder: () => 'open' },
+  { label: 'Pin', width: 46, get: (w) => String(w.to_pin), set: (v) => ({ to_pin: v }), invalidates: true, mono: true, pigtailPlaceholder: () => 'open' },
   { label: 'Color', width: 92, get: (w) => w.wire_color, set: (v) => ({ wire_color: v }), swatch: true },
   { label: 'Signal', width: 84, get: (w) => w.signal_name ?? '', set: (v) => ({ signal_name: v || undefined }) },
   { label: 'Gauge', width: 76, get: (w) => w.gauge, set: (v) => ({ gauge: v }) },
   { label: 'Twist', width: 62, get: (w) => w.twist_group ?? '', set: (v) => ({ twist_group: v || undefined }) },
   { label: 'Shield', width: 62, get: (w) => w.shield_group ?? '', set: (v) => ({ shield_group: v || undefined }) },
   { label: 'Overall', width: 66, get: (w) => w.overall_shield ?? '', set: (v) => ({ overall_shield: v || undefined }) },
+  {
+    label: 'Shld pin',
+    width: 66,
+    get: (w) => w.shield_pin ?? '',
+    set: (v) => ({ shield_pin: v || undefined }),
+    mono: true,
+    hint: 'Pigtail only: connector pin this wire\u2019s shield connects to. Blank uses the SHLD pin (if enabled on the connector).',
+    pigtailPlaceholder: (pigtail) => (hasShieldPin(pigtail) ? SHIELD_PIN : ''),
+  },
 ]
 
 export function DataPanel({
@@ -240,16 +262,23 @@ export function DataPanel({
     ])
   }
 
+  const pigtailById = new Map(
+    connectors.filter((c) => c.pigtail).map((c) => [c.connector_id, c]),
+  )
+
   function addWire() {
     const from = connectors[0]
-    const to = connectors[1] ?? connectors[0]
+    const fromIsPigtail = from?.pigtail === true
+    const to = fromIsPigtail ? undefined : (connectors[1] ?? connectors[0])
     const sameConnector = from && to && from.connector_id === to.connector_id
     const fromPin = sameConnector
       ? firstFreePins(from, wires, 2)[0]
       : firstFreePin(from, wires)
     const toPin = sameConnector
       ? firstFreePins(from, wires, 2)[1]
-      : firstFreePin(to, wires)
+      : to
+        ? firstFreePin(to, wires)
+        : ''
     onEditStart()
     onWiresChange([
       ...wires,
@@ -261,7 +290,7 @@ export function DataPanel({
         from_connector: from?.connector_id ?? '',
         from_pin: fromPin ?? '1',
         to_connector: to?.connector_id ?? '',
-        to_pin: toPin ?? '1',
+        to_pin: to ? (toPin ?? '1') : '',
         wire_color: 'red',
         gauge: '22 AWG',
       },
@@ -361,7 +390,12 @@ export function DataPanel({
                   <Th className="w-16">Pins</Th>
                   <Th className="w-16">Pigtail</Th>
                   <Th className="w-16">Length</Th>
-                  <Th className="w-16">Shield</Th>
+                  <Th
+                    className="w-16"
+                    title="Add a SHLD pin in the connector header and terminate cable shields on it"
+                  >
+                    SHLD
+                  </Th>
                   <Th className="w-8" />
                 </tr>
               </thead>
@@ -434,14 +468,14 @@ export function DataPanel({
                             <Cell
                               mono
                               type="number"
-                              value={row.pigtail_length ?? 100}
+                              value={row.pigtail_length ?? DEFAULT_PIGTAIL_LENGTH}
                               ariaLabel="Pigtail length"
                               placeholder="Length"
                               onFocus={onEditStart}
                               onChange={(value) => {
                                 const n = Number(value)
                                 updateConnector(index, {
-                                  pigtail_length: Number.isFinite(n) ? n : 100,
+                                  pigtail_length: Number.isFinite(n) ? n : DEFAULT_PIGTAIL_LENGTH,
                                 })
                               }}
                             />
@@ -452,7 +486,7 @@ export function DataPanel({
                               className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800"
                               checked={row.pigtail_shield_to_body ?? false}
                               aria-label="Shield to body"
-                              title="Connect shields to connector body"
+                              title="Add a SHLD pin and connect shields to it"
                               onChange={(event) => {
                                 onEditStart()
                                 updateConnector(index, {
@@ -555,6 +589,7 @@ export function DataPanel({
                   <Th
                     key={`${column.label}-${i}`}
                     className={i === 0 ? 'pl-2.5' : undefined}
+                    title={column.hint}
                   >
                     {column.label}
                   </Th>
@@ -568,6 +603,7 @@ export function DataPanel({
                   wireErrorIds.has(row.wire_id) ||
                   duplicateWireIds.has(row.wire_id)
                 const focused = focusedWireId === row.wire_id
+                const pigtailFrom = pigtailById.get(row.from_connector)
                 return (
                   <tr
                     key={`${row.wire_id}-${index}`}
@@ -597,6 +633,11 @@ export function DataPanel({
                             className={`field ${column.mono ? 'font-mono' : ''} ${column.swatch ? 'pl-5' : ''} ${error && column.invalidates ? 'field-error' : ''}`}
                             aria-label={`${column.label} for ${row.wire_id}`}
                             value={column.get(row)}
+                            placeholder={
+                              pigtailFrom && column.pigtailPlaceholder
+                                ? column.pigtailPlaceholder(pigtailFrom)
+                                : undefined
+                            }
                             onFocus={onEditStart}
                             onChange={(event) =>
                               updateWire(index, column.set(event.target.value))

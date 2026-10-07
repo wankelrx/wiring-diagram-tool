@@ -207,8 +207,8 @@ export function sceneToPdf(
       'center',
     )
     for (const pin of connector.pins) {
-      fill(pin.error ? theme.error : theme.pinFill)
-      stroke(pin.error ? theme.error : theme.pinStroke, 1.35)
+      fill(pin.error ? theme.error : pin.shield ? theme.shieldStroke : theme.pinFill)
+      stroke(pin.error ? theme.error : pin.shield ? theme.shieldStroke : theme.pinStroke, 1.35)
       circle(pin.x, pin.y, 4.5, 'B')
       textAt(pin.labelX, pin.labelY + 3, 10, pin.error ? theme.error : theme.text, pin.pin, 'center')
       if (pin.signal) {
@@ -222,6 +222,17 @@ export function sceneToPdf(
         )
       }
     }
+  }
+
+  for (const link of scene.shieldLinks) {
+    const overall = link.kind === 'overall'
+    const color = overall ? theme.overallShieldStroke : theme.shieldStroke
+    stroke(color, overall ? 2.25 : 1.5, overall ? [14, 5, 3, 5] : [6, 4])
+    poly(link.points)
+    fill(color)
+    stroke(color, 0.5)
+    circle(link.pin.x, link.pin.y, 2.6, 'B')
+    circle(link.anchor.x, link.anchor.y, 2.6, 'B')
   }
 
   if (doc) {

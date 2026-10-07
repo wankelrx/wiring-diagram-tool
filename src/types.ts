@@ -4,8 +4,11 @@ export type Connector = {
   pin_count: number
   position_x?: number
   position_y?: number
+  /** Single-ended cable: wires leave the pins and run out to nothing. */
   pigtail?: boolean
+  /** Length of the free run, in drawing units. */
   pigtail_length?: number
+  /** Add a SHLD pin to the connector and terminate shields on it. */
   pigtail_shield_to_body?: boolean
 }
 
@@ -23,6 +26,11 @@ export type Wire = {
   shield_group?: string
   /** Outer cable shield covering multiple pairs / the whole harness between two connectors. */
   overall_shield?: string
+  /**
+   * Pigtail only: connector pin this wire's shield terminates on, instead of
+   * the SHLD body pin.
+   */
+  shield_pin?: string
 }
 
 export type ValidationError = {

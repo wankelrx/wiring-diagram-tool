@@ -153,8 +153,8 @@ export function sceneToSvgString(
       `<text x="${connector.x + connector.width / 2}" y="${connector.y + 34}" text-anchor="middle" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="${theme.mutedText}">${esc(connector.id)}</text>`,
     )
     for (const pin of connector.pins) {
-      const fill = pin.error ? theme.error : theme.pinFill
-      const pinStroke = pin.error ? theme.error : theme.pinStroke
+      const fill = pin.error ? theme.error : pin.shield ? theme.shieldStroke : theme.pinFill
+      const pinStroke = pin.error ? theme.error : pin.shield ? theme.shieldStroke : theme.pinStroke
       parts.push(
         `<circle cx="${pin.x}" cy="${pin.y}" r="4.5" fill="${fill}" stroke="${pinStroke}" stroke-width="1.35"/>`,
       )
@@ -167,6 +167,16 @@ export function sceneToSvgString(
         )
       }
     }
+  }
+
+  for (const link of scene.shieldLinks) {
+    const overall = link.kind === 'overall'
+    const stroke = overall ? theme.overallShieldStroke : theme.shieldStroke
+    parts.push(
+      `<path d="${link.path}" fill="none" stroke="${stroke}" stroke-width="${overall ? 2.25 : 1.5}" stroke-linecap="round" stroke-linejoin="miter" stroke-dasharray="${overall ? '14 5 3 5' : '6 4'}"/>`,
+    )
+    parts.push(`<circle cx="${link.pin.x}" cy="${link.pin.y}" r="2.6" fill="${stroke}"/>`)
+    parts.push(`<circle cx="${link.anchor.x}" cy="${link.anchor.y}" r="2.6" fill="${stroke}"/>`)
   }
 
   if (doc) {

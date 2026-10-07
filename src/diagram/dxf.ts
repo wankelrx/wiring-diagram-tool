@@ -108,6 +108,15 @@ export function sceneToDxf(scene: Scene, doc?: ExportDocument): string {
       shield.kind === 'overall' ? '#0f766e' : '#64748b',
     )
   }
+  for (const link of scene.shieldLinks) {
+    const overall = link.kind === 'overall'
+    polyline(
+      link.points,
+      overall ? 'OVERALL_SHIELD' : 'SHIELDS',
+      overall ? '#0f766e' : '#64748b',
+    )
+    circle(link.anchor.x, link.anchor.y, 2.6, 'PINS', overall ? '#0f766e' : '#64748b')
+  }
   for (const wire of scene.wires) {
     polyline(wire.points, 'WIRES', wire.error ? '#dc2626' : wire.color)
     if (wire.label) text(wire.labelX, wire.labelY, 8, wire.label, 'TEXT', '#0f172a')
