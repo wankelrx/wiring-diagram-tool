@@ -50,7 +50,7 @@ export default function App() {
   const [showCableIds, setShowCableIds] = useState(saved?.showCableIds ?? true)
   const [dark, setDark] = useState(saved?.dark ?? true)
   const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(
-    saved?.connectors[0]?.connector_id ?? 'J1',
+    saved ? (saved.connectors[0]?.connector_id ?? null) : 'J1',
   )
   const [hoveredConnectorId, setHoveredConnectorId] = useState<string | null>(
     null,
@@ -227,6 +227,24 @@ export default function App() {
     setStatus('Loaded sample harness.')
   }
 
+  function newDiagram() {
+    checkpoint()
+    setConnectors([])
+    setWires([])
+    setMeta({
+      ...DEFAULT_DRAWING_META,
+      date: new Date().toLocaleDateString('en-CA'),
+    })
+    setSelectedConnectorId(null)
+    setHoveredConnectorId(null)
+    setHighlightedBundleId(null)
+    setFocusedWireId(null)
+    setImportErrors([])
+    setPendingExport(null)
+    setFitNonce((n) => n + 1)
+    setStatus('Started a new diagram. Undo to get the previous one back.')
+  }
+
   function arrangeConnectors() {
     checkpoint()
     setConnectors((current) => autoArrangeConnectors(current, wires))
@@ -261,6 +279,7 @@ export default function App() {
           onArrange={arrangeConnectors}
           onUndo={undo}
           onRedo={redo}
+          onNew={newDiagram}
           onResetSample={resetSample}
           onExportSvg={() =>
             requestExport(() =>

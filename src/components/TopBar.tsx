@@ -115,6 +115,7 @@ export function TopBar({
   onArrange,
   onUndo,
   onRedo,
+  onNew,
   onResetSample,
   onExportSvg,
   onExportPng,
@@ -139,6 +140,7 @@ export function TopBar({
   onArrange: () => void
   onUndo: () => void
   onRedo: () => void
+  onNew: () => void
   onResetSample: () => void
   onExportSvg: () => void
   onExportPng: () => void
@@ -190,6 +192,14 @@ export function TopBar({
       </div>
 
       <Divider />
+
+      <ToolbarButton
+        icon="plus"
+        onClick={onNew}
+        title="Start a blank diagram (undo restores the current one)"
+      >
+        New
+      </ToolbarButton>
 
       <label className="cursor-pointer" title="Import a wire list (.xlsx or .csv)">
         <span className="btn">
