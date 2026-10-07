@@ -223,10 +223,24 @@ export function validateDataset(
 
   const usage = new Map<string, string[]>()
   for (const wire of wires) {
-    const keys = [
-      pinKey(wire.from_connector, String(wire.from_pin)),
-      pinKey(wire.to_connector, String(wire.to_pin)),
-    ]
+    const fromConnector = byId.get(wire.from_connector)
+    const isPigtailWire = fromConnector?.pigtail === true
+    
+    const keys: string[] = []
+    
+    // Always add FROM key if connector exists
+    if (wire.from_connector && String(wire.from_pin).trim()) {
+      keys.push(pinKey(wire.from_connector, String(wire.from_pin)))
+    }
+    
+    // Only add TO key if not a pigtail wire OR if TO fields are actually filled in
+    if (wire.to_connector && String(wire.to_pin).trim()) {
+      // Skip if this is a pigtail wire with empty TO fields
+      if (!isPigtailWire || wire.to_connector.trim()) {
+        keys.push(pinKey(wire.to_connector, String(wire.to_pin)))
+      }
+    }
+    
     for (const key of keys) {
       const list = usage.get(key) ?? []
       list.push(wire.wire_id)
