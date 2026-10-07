@@ -327,14 +327,31 @@ export function computeLayout(
       }
     })
 
-    const wired = layout.pins.find((p) => p.pin !== SHIELD_PIN)
+    const wiredPins = new Set<string>()
+    for (const wire of wires) {
+      if (wire.from_connector === layout.connector.connector_id) {
+        wiredPins.add(String(wire.from_pin))
+      }
+      if (wire.to_connector === layout.connector.connector_id) {
+        wiredPins.add(String(wire.to_pin))
+      }
+    }
+    const sideVotes = { left: 0, right: 0 }
+    for (const p of layout.pins) {
+      if (p.pin !== SHIELD_PIN && wiredPins.has(p.pin)) sideVotes[p.side] += 1
+    }
     if (
       hasShieldPin(layout.connector) &&
       !layout.pins.some((p) => p.pin === SHIELD_PIN)
     ) {
       // Shield drain pin rides in the header, above every conductor, on the
       // same face the wires leave from.
-      const side = wired?.side ?? layout.pinSide
+      const side: PinSide =
+        sideVotes.left === sideVotes.right
+          ? layout.pinSide
+          : sideVotes.left > sideVotes.right
+            ? 'left'
+            : 'right'
       const dir = side === 'right' ? 1 : -1
       const pinX = side === 'right' ? layout.x + layout.width : layout.x
       const y = layout.y + HEADER_H / 2

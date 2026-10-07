@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { resolveWireColor } from '../colors'
 import type { Connector, DrawingMeta, ValidationError, Wire } from '../types'
-import { DEFAULT_PIGTAIL_LENGTH, hasShieldPin, SHIELD_PIN } from '../pigtail'
+import { DEFAULT_PIGTAIL_LENGTH, hasShieldPin, openEndOf, SHIELD_PIN } from '../pigtail'
 import { firstFreePin, firstFreePins } from '../validation'
 import { Icon } from './icons'
 
@@ -140,16 +140,34 @@ type WireColumn = {
   mono?: boolean
   swatch?: boolean
   hint?: string
-  /** Placeholder shown when the wire runs from a pigtail and this end is blank. */
-  pigtailPlaceholder?: (pigtail: Connector) => string
+  placeholder?: (wire: Wire, byId: Map<string, Connector>) => string | undefined
 }
+
+/** A pigtail's free end is implied, so its blank To fields read "open". */
+const openEndPlaceholder: WireColumn['placeholder'] = (wire, byId) =>
+  byId.get(wire.from_connector)?.pigtail ? 'open' : undefined
+
+const shieldPinPlaceholder =
+  (end: 'from' | 'to'): WireColumn['placeholder'] =>
+  (wire, byId) => {
+    const open = openEndOf(wire, byId)
+    const id = open
+      ? end === 'from'
+        ? open.connectorId
+        : ''
+      : end === 'from'
+        ? wire.from_connector
+        : wire.to_connector
+    const connector = byId.get(id)
+    return connector && hasShieldPin(connector) ? SHIELD_PIN : undefined
+  }
 
 const WIRE_COLUMNS: WireColumn[] = [
   { label: 'ID', width: 56, get: (w) => w.wire_id, set: (v) => ({ wire_id: v }), invalidates: true, mono: true },
   { label: 'From', width: 58, get: (w) => w.from_connector, set: (v) => ({ from_connector: v }), invalidates: true, mono: true },
   { label: 'Pin', width: 46, get: (w) => String(w.from_pin), set: (v) => ({ from_pin: v }), invalidates: true, mono: true },
-  { label: 'To', width: 58, get: (w) => w.to_connector, set: (v) => ({ to_connector: v }), invalidates: true, mono: true, pigtailPlaceholder: () => 'open' },
-  { label: 'Pin', width: 46, get: (w) => String(w.to_pin), set: (v) => ({ to_pin: v }), invalidates: true, mono: true, pigtailPlaceholder: () => 'open' },
+  { label: 'To', width: 58, get: (w) => w.to_connector, set: (v) => ({ to_connector: v }), invalidates: true, mono: true, placeholder: openEndPlaceholder },
+  { label: 'Pin', width: 46, get: (w) => String(w.to_pin), set: (v) => ({ to_pin: v }), invalidates: true, mono: true, placeholder: openEndPlaceholder },
   { label: 'Color', width: 92, get: (w) => w.wire_color, set: (v) => ({ wire_color: v }), swatch: true },
   { label: 'Signal', width: 84, get: (w) => w.signal_name ?? '', set: (v) => ({ signal_name: v || undefined }) },
   { label: 'Gauge', width: 76, get: (w) => w.gauge, set: (v) => ({ gauge: v }) },
@@ -162,8 +180,17 @@ const WIRE_COLUMNS: WireColumn[] = [
     get: (w) => w.shield_pin ?? '',
     set: (v) => ({ shield_pin: v || undefined }),
     mono: true,
-    hint: 'Pigtail only: connector pin this wire\u2019s shield connects to. Blank uses the SHLD pin (if enabled on the connector).',
-    pigtailPlaceholder: (pigtail) => (hasShieldPin(pigtail) ? SHIELD_PIN : ''),
+    hint: 'Pin on the From connector (the pigtail, if the To end is open) that this wire\u2019s shield connects to. Blank uses that connector\u2019s SHLD pin, if it has one.',
+    placeholder: shieldPinPlaceholder('from'),
+  },
+  {
+    label: 'Shld pin To',
+    width: 74,
+    get: (w) => w.shield_pin_to ?? '',
+    set: (v) => ({ shield_pin_to: v || undefined }),
+    mono: true,
+    hint: 'Pin on the To connector that this wire\u2019s shield connects to. Blank uses that connector\u2019s SHLD pin, if it has one.',
+    placeholder: shieldPinPlaceholder('to'),
   },
 ]
 
@@ -262,9 +289,7 @@ export function DataPanel({
     ])
   }
 
-  const pigtailById = new Map(
-    connectors.filter((c) => c.pigtail).map((c) => [c.connector_id, c]),
-  )
+  const connectorById = new Map(connectors.map((c) => [c.connector_id, c]))
 
   function addWire() {
     const from = connectors[0]
@@ -462,46 +487,39 @@ export function DataPanel({
                           }}
                         />
                       </td>
-                      {row.pigtail ? (
-                        <>
-                          <td className="px-0.5 py-1">
-                            <Cell
-                              mono
-                              type="number"
-                              value={row.pigtail_length ?? DEFAULT_PIGTAIL_LENGTH}
-                              ariaLabel="Pigtail length"
-                              placeholder="Length"
-                              onFocus={onEditStart}
-                              onChange={(value) => {
-                                const n = Number(value)
-                                updateConnector(index, {
-                                  pigtail_length: Number.isFinite(n) ? n : DEFAULT_PIGTAIL_LENGTH,
-                                })
-                              }}
-                            />
-                          </td>
-                          <td className="px-0.5 py-1 text-center">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800"
-                              checked={row.pigtail_shield_to_body ?? false}
-                              aria-label="Shield to body"
-                              title="Add a SHLD pin and connect shields to it"
-                              onChange={(event) => {
-                                onEditStart()
-                                updateConnector(index, {
-                                  pigtail_shield_to_body: event.target.checked,
-                                })
-                              }}
-                            />
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td className="px-0.5 py-1" />
-                          <td className="px-0.5 py-1" />
-                        </>
-                      )}
+                      <td className="px-0.5 py-1">
+                        {row.pigtail ? (
+                          <Cell
+                            mono
+                            type="number"
+                            value={row.pigtail_length ?? DEFAULT_PIGTAIL_LENGTH}
+                            ariaLabel="Pigtail length"
+                            placeholder="Length"
+                            onFocus={onEditStart}
+                            onChange={(value) => {
+                              const n = Number(value)
+                              updateConnector(index, {
+                                pigtail_length: Number.isFinite(n) ? n : DEFAULT_PIGTAIL_LENGTH,
+                              })
+                            }}
+                          />
+                        ) : null}
+                      </td>
+                      <td className="px-0.5 py-1 text-center">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800"
+                          checked={hasShieldPin(row)}
+                          aria-label="Shield to connector"
+                          title="Add a SHLD pin and connect cable shields to it"
+                          onChange={(event) => {
+                            onEditStart()
+                            updateConnector(index, {
+                              shield_to_body: event.target.checked,
+                            })
+                          }}
+                        />
+                      </td>
                       <td className="py-1 pr-1.5 text-right">
                         <DeleteButton
                           label={`Delete connector ${row.connector_id}`}
@@ -603,7 +621,6 @@ export function DataPanel({
                   wireErrorIds.has(row.wire_id) ||
                   duplicateWireIds.has(row.wire_id)
                 const focused = focusedWireId === row.wire_id
-                const pigtailFrom = pigtailById.get(row.from_connector)
                 return (
                   <tr
                     key={`${row.wire_id}-${index}`}
@@ -634,8 +651,8 @@ export function DataPanel({
                             aria-label={`${column.label} for ${row.wire_id}`}
                             value={column.get(row)}
                             placeholder={
-                              pigtailFrom && column.pigtailPlaceholder
-                                ? column.pigtailPlaceholder(pigtailFrom)
+                              column.placeholder && !column.get(row)
+                                ? column.placeholder(row, connectorById)
                                 : undefined
                             }
                             onFocus={onEditStart}

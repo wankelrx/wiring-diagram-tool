@@ -11,7 +11,7 @@ export const CONNECTOR_HEADERS = [
   'position_y',
   'pigtail',
   'pigtail_length',
-  'pigtail_shield_to_body',
+  'shield_to_body',
 ] as const
 
 export const WIRE_HEADERS = [
@@ -27,6 +27,7 @@ export const WIRE_HEADERS = [
   'shield_group',
   'overall_shield',
   'shield_pin',
+  'shield_pin_to',
 ] as const
 
 export type SheetAoa = {
@@ -112,8 +113,8 @@ function parseConnectors(rows: Record<string, unknown>[]): Connector[] {
       ...(optionalNumber(row.pigtail_length) !== undefined
         ? { pigtail_length: optionalNumber(row.pigtail_length) }
         : {}),
-      ...(optionalBoolean(row.pigtail_shield_to_body)
-        ? { pigtail_shield_to_body: true }
+      ...(optionalBoolean(row.shield_to_body ?? row.pigtail_shield_to_body)
+        ? { shield_to_body: true }
         : {}),
     }))
 }
@@ -139,6 +140,7 @@ function parseWires(rows: Record<string, unknown>[]): Wire[] {
       shield_group: cell(row.shield_group) || undefined,
       overall_shield: cell(row.overall_shield) || undefined,
       shield_pin: cell(row.shield_pin) || undefined,
+      shield_pin_to: cell(row.shield_pin_to) || undefined,
     }))
 }
 
@@ -335,6 +337,7 @@ function wireRows(wires: Wire[]): unknown[][] {
       wire.shield_group ?? '',
       wire.overall_shield ?? '',
       wire.shield_pin ?? '',
+      wire.shield_pin_to ?? '',
     ]),
   ]
 }
@@ -366,7 +369,7 @@ export async function downloadTemplate() {
         name: 'Wires',
         rows: [
           [...WIRE_HEADERS],
-          ['W1', 'J1', '1', 'J2', '1', 'red', '22 AWG', '+24V', '', '', '', ''],
+          ['W1', 'J1', '1', 'J2', '1', 'red', '22 AWG', '+24V', '', '', '', '', ''],
         ],
       },
     ],

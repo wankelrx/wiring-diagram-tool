@@ -630,6 +630,7 @@ function shieldLinkRoute(
     return gap < 4 ? null : [start, { x: facingX, y: pin.y }]
   }
   const edgeY = pin.y <= minY + 1 ? minY : maxY
+  if (gap < 0) return null
   if (gap < 14) {
     // Shield starts right at the connector face: step out, then run along the
     // shield's top or bottom edge.
@@ -753,44 +754,48 @@ export function computeScene(
   const reserved: RouteChannels = { vertical: [], horizontal: [] }
 
   const shieldLinks: SceneShieldLink[] = []
-  const pigtailForBundle = (bundleId: string): Connector | undefined => {
-    for (const end of bundleId.split('--')) {
-      const base = connectorById.get(pigtailBaseId(end))
-      if (base?.pigtail) return base
-    }
-    return undefined
-  }
-  // Shields terminate on the pigtail's SHLD pin, or on a wire's chosen pin.
+  // Each end of a shield terminates on that connector's SHLD pin, or on the
+  // pin a wire names; a connector with neither is left unlinked.
   const linkShield = (
     id: string,
     kind: 'pair' | 'overall',
     outline: Point[],
     group: Routed[],
-    pigtail: Connector | undefined,
+    ends: Array<string | undefined>,
   ) => {
-    if (!pigtail) return
-    const pigtailLayout = layout.byId.get(pigtail.connector_id)
-    if (!pigtailLayout) return
-    const chosen = shieldPinFor(group.map((row) => row.wire))
-    const pin =
-      (chosen ? findPin(pigtailLayout, chosen) : undefined) ??
-      (hasShieldPin(pigtail) ? findPin(pigtailLayout, SHIELD_PIN) : undefined)
-    if (!pin) return
-    const points = shieldLinkRoute(outline, pin)
-    if (!points) return
-    shieldLinks.push({
-      id,
-      kind,
-      points,
-      path: polylinePath(points),
-      pin: points[0]!,
-      anchor: points[points.length - 1]!,
-    })
+    const seen = new Set<string>()
+    for (const end of ends) {
+      if (!end || isPigtailEndId(end) || seen.has(end)) continue
+      seen.add(end)
+      const connector = connectorById.get(end)
+      const endLayout = layout.byId.get(end)
+      if (!connector || !endLayout) continue
+      const chosen = shieldPinFor(
+        group.map((row) => row.wire),
+        end,
+      )
+      const pin =
+        (chosen ? findPin(endLayout, chosen) : undefined) ??
+        (hasShieldPin(connector) ? findPin(endLayout, SHIELD_PIN) : undefined)
+      if (!pin) continue
+      const points = shieldLinkRoute(outline, pin)
+      if (!points) continue
+      shieldLinks.push({
+        id: `${id}:${end}`,
+        kind,
+        points,
+        path: polylinePath(points),
+        pin: points[0]!,
+        anchor: points[points.length - 1]!,
+      })
+    }
   }
 
   for (const [id, members] of bundles) {
     const [endA, endB] = id.split('--')
-    const bundlePigtail = pigtailForBundle(id)
+    const bundlePigtail = [endA, endB]
+      .map((end) => connectorById.get(pigtailBaseId(end ?? '')))
+      .find((c) => c?.pigtail)
     const bundleExclude = [
       endA ? obstacleById.get(endA) : undefined,
       endB ? obstacleById.get(endB) : undefined,
@@ -1189,7 +1194,7 @@ export function computeScene(
         outlinePath: polylinePath(envelope.outline),
         kind: 'pair',
       })
-      linkShield(pairId, 'pair', envelope.outline, group, bundlePigtail)
+      linkShield(pairId, 'pair', envelope.outline, group, [endA, endB])
     }
 
     const overallGroups = groupBy(
@@ -1239,7 +1244,7 @@ export function computeScene(
         outlinePath: polylinePath(envelope.outline),
         kind: 'overall',
       })
-      linkShield(overallShieldId, 'overall', envelope.outline, group, bundlePigtail)
+      linkShield(overallShieldId, 'overall', envelope.outline, group, [endA, endB])
     }
   }
 

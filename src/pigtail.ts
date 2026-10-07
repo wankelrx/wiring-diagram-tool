@@ -30,7 +30,7 @@ export function pigtailLength(connector: Connector): number {
 }
 
 export function hasShieldPin(connector: Connector): boolean {
-  return connector.pigtail === true && connector.pigtail_shield_to_body === true
+  return (connector.shield_to_body ?? connector.pigtail_shield_to_body) === true
 }
 
 export type OpenEnd = {
@@ -60,10 +60,38 @@ export function openEndOf(
   return null
 }
 
-/** Pin a shield group terminates on: an explicit per-wire pin, else SHLD. */
-export function shieldPinFor(wires: Wire[]): string | undefined {
-  for (const wire of wires) {
+/**
+ * Pin on `connectorId` that this wire's shield terminates on, if the wire names
+ * one. Pass `byId` for raw wires so a pigtail's blank end is understood.
+ */
+export function wireShieldPin(
+  wire: Wire,
+  connectorId: string,
+  byId?: Map<string, Connector>,
+): string | undefined {
+  const open = byId ? openEndOf(wire, byId) : null
+  if (open) {
+    return open.connectorId === connectorId ? wire.shield_pin?.trim() || undefined : undefined
+  }
+  if (pigtailBaseId(wire.from_connector ?? '') === connectorId) {
     const pin = wire.shield_pin?.trim()
+    if (pin) return pin
+  }
+  if (pigtailBaseId(wire.to_connector ?? '') === connectorId) {
+    const pin = wire.shield_pin_to?.trim()
+    if (pin) return pin
+  }
+  return undefined
+}
+
+/** First pin any wire of a shield group names on `connectorId`. */
+export function shieldPinFor(
+  wires: Wire[],
+  connectorId: string,
+  byId?: Map<string, Connector>,
+): string | undefined {
+  for (const wire of wires) {
+    const pin = wireShieldPin(wire, connectorId, byId)
     if (pin) return pin
   }
   return undefined

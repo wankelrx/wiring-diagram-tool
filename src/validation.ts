@@ -1,5 +1,11 @@
 import { isKnownWireColor } from './colors'
-import { hasShieldPin, isPigtailEndId, openEndOf, SHIELD_PIN } from './pigtail'
+import {
+  hasShieldPin,
+  isPigtailEndId,
+  openEndOf,
+  SHIELD_PIN,
+  wireShieldPin,
+} from './pigtail'
 import type { Connector, PinoutRow, ValidationError, Wire } from './types'
 
 export function pinKey(connectorId: string, pin: string): string {
@@ -249,23 +255,28 @@ export function validateDataset(
   }
 
   for (const wire of wires) {
-    const shieldPin = wire.shield_pin?.trim()
-    if (shieldPin) {
-      const open = openEndOf(wire, byId)
-      const pigtail = open ? byId.get(open.connectorId) : undefined
-      if (!pigtail) {
+    const open = openEndOf(wire, byId)
+    const shieldEnds: Array<[string | undefined, string]> = [
+      [wire.shield_pin, open ? open.connectorId : wire.from_connector],
+      [wire.shield_pin_to, open ? '' : wire.to_connector],
+    ]
+    for (const [rawPin, connectorId] of shieldEnds) {
+      const shieldPin = rawPin?.trim()
+      if (!shieldPin) continue
+      const connector = byId.get(connectorId)
+      if (!connector) {
         warnings.push({
           kind: 'warning',
-          message: `Wire ${wire.wire_id || '(unnamed)'} has a shield pin, which only applies to pigtail wires`,
+          message: `Wire ${wire.wire_id || '(unnamed)'} has a shield pin but no connector at that end`,
           wire_id: wire.wire_id,
         })
       } else if (
         shieldPin !== SHIELD_PIN &&
-        !pinSets.get(pigtail.connector_id)?.has(shieldPin)
+        !pinSets.get(connector.connector_id)?.has(shieldPin)
       ) {
         warnings.push({
           kind: 'warning',
-          message: `Wire ${wire.wire_id || '(unnamed)'} shield pin "${shieldPin}" is not on ${pigtail.connector_id}`,
+          message: `Wire ${wire.wire_id || '(unnamed)'} shield pin "${shieldPin}" is not on ${connector.connector_id}`,
           wire_id: wire.wire_id,
         })
       }
@@ -347,12 +358,13 @@ export function pinoutRows(connector: Connector, wires: Wire[]): PinoutRow[] {
     })
   }
   if (hasShieldPin(connector)) {
+    const byId = new Map([[connector.connector_id, connector]])
+    const id = connector.connector_id
     const shielded = wires.filter(
       (w) =>
-        openEndOf(w, new Map([[connector.connector_id, connector]]))
-          ?.connectorId === connector.connector_id &&
-        !w.shield_pin?.trim() &&
-        (w.shield_group?.trim() || w.overall_shield?.trim()),
+        (w.from_connector === id || w.to_connector === id) &&
+        (w.shield_group?.trim() || w.overall_shield?.trim()) &&
+        !wireShieldPin(w, id, byId),
     )
     rows.push({
       pin: SHIELD_PIN,

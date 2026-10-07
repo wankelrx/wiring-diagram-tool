@@ -8,7 +8,9 @@ export type Connector = {
   pigtail?: boolean
   /** Length of the free run, in drawing units. */
   pigtail_length?: number
-  /** Add a SHLD pin to the connector and terminate shields on it. */
+  /** Add a SHLD pin to the connector and terminate cable shields on it. */
+  shield_to_body?: boolean
+  /** Legacy name of `shield_to_body` (pigtails only); still read from old data. */
   pigtail_shield_to_body?: boolean
 }
 
@@ -27,10 +29,12 @@ export type Wire = {
   /** Outer cable shield covering multiple pairs / the whole harness between two connectors. */
   overall_shield?: string
   /**
-   * Pigtail only: connector pin this wire's shield terminates on, instead of
-   * the SHLD body pin.
+   * Pin on the FROM connector (the pigtail, for a wire with a blank end) that
+   * this wire's shield terminates on, instead of that connector's SHLD pin.
    */
   shield_pin?: string
+  /** Same as `shield_pin`, for the TO connector. */
+  shield_pin_to?: string
 }
 
 export type ValidationError = {

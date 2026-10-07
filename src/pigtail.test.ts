@@ -24,7 +24,7 @@ const pigtail = (extra: Partial<Connector> = {}): Connector => ({
   position_y: 100,
   pigtail: true,
   pigtail_length: 220,
-  pigtail_shield_to_body: true,
+  shield_to_body: true,
   ...extra,
 })
 
@@ -72,7 +72,7 @@ describe('pigtail connectors', () => {
 
   it('omits the SHLD pin and link when shield-to-body is off', () => {
     const scene = computeScene(
-      [pigtail({ pigtail_shield_to_body: false })],
+      [pigtail({ shield_to_body: false })],
       shielded,
       OPTIONS,
     )
@@ -86,7 +86,7 @@ describe('pigtail connectors', () => {
       wire('W2', '2', { shield_group: 'A' }),
     ]
     const scene = computeScene(
-      [pigtail({ pigtail_shield_to_body: false })],
+      [pigtail({ shield_to_body: false })],
       wires,
       OPTIONS,
     )
@@ -164,7 +164,7 @@ describe('pigtail connectors', () => {
     expect(parsed.connectors?.[0]).toMatchObject({
       pigtail: true,
       pigtail_length: 150,
-      pigtail_shield_to_body: true,
+      shield_to_body: true,
     })
     expect(parsed.wires?.[0]?.shield_pin).toBe('4')
   })
@@ -187,5 +187,62 @@ describe('DXF export', () => {
     expect(dxf).not.toMatch(/NaN|Infinity|undefined/)
     expect(dxf).toContain('SEQEND')
     expect(dxf).toContain('LTYPE')
+  })
+})
+
+describe('shields on ordinary connectors', () => {
+  const pair = (extra: Partial<Connector> = {}): Connector[] => [
+    { connector_id: 'J1', connector_name: 'J1', pin_count: 4, position_x: 60, position_y: 60, ...extra },
+    { connector_id: 'J2', connector_name: 'J2', pin_count: 4, position_x: 560, position_y: 60 },
+  ]
+  const run = (id: string, pin: string, extra: Partial<Wire> = {}): Wire => ({
+    wire_id: id,
+    from_connector: 'J1',
+    from_pin: pin,
+    to_connector: 'J2',
+    to_pin: pin,
+    wire_color: 'red',
+    gauge: '22 AWG',
+    shield_group: 'S',
+    twist_group: 'S',
+    ...extra,
+  })
+  const wires = [run('W1', '3'), run('W2', '4')]
+
+  it('links the shield to one connector when only that one has SHLD', () => {
+    const scene = computeScene(pair({ shield_to_body: true }), wires, OPTIONS)
+    expect(scene.connectors.find((c) => c.id === 'J1')!.pins.some((p) => p.pin === 'SHLD')).toBe(true)
+    expect(scene.connectors.find((c) => c.id === 'J2')!.pins.some((p) => p.pin === 'SHLD')).toBe(false)
+    expect(scene.shieldLinks).toHaveLength(1)
+    expect(isRightAngle(scene.shieldLinks[0]!.points)).toBe(true)
+  })
+
+  it('links the shield to both connectors when both have SHLD', () => {
+    const connectors = pair({ shield_to_body: true })
+    connectors[1]!.shield_to_body = true
+    const scene = computeScene(connectors, wires, OPTIONS)
+    expect(scene.shieldLinks).toHaveLength(2)
+    expect(new Set(scene.shieldLinks.map((l) => l.id)).size).toBe(2)
+    for (const link of scene.shieldLinks) expect(isRightAngle(link.points)).toBe(true)
+  })
+
+  it('terminates a shield on a chosen pin of the To connector', () => {
+    const scene = computeScene(
+      pair(),
+      [run('W1', '3', { shield_pin_to: '1' }), run('W2', '4')],
+      OPTIONS,
+    )
+    const pin1 = scene.connectors.find((c) => c.id === 'J2')!.pins.find((p) => p.pin === '1')!
+    expect(scene.shieldLinks).toHaveLength(1)
+    expect(scene.shieldLinks[0]!.pin).toEqual({ x: pin1.x, y: pin1.y })
+  })
+
+  it('has no links when no connector asks for one', () => {
+    expect(computeScene(pair(), wires, OPTIONS).shieldLinks).toHaveLength(0)
+  })
+
+  it('warns about a shield pin that is not on the connector', () => {
+    const result = validateDataset(pair(), [run('W1', '3', { shield_pin_to: '99' })])
+    expect(result.warnings.some((w) => w.message.includes('"99"'))).toBe(true)
   })
 })
