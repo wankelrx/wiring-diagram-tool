@@ -4,6 +4,9 @@ export type Connector = {
   pin_count: number
   position_x?: number
   position_y?: number
+  pigtail?: boolean
+  pigtail_length?: number
+  pigtail_shield_to_body?: boolean
 }
 
 export type Wire = {

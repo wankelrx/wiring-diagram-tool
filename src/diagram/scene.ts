@@ -583,7 +583,44 @@ export function computeScene(
   wires: Wire[],
   options: SceneOptions,
 ): Scene {
-  const layout = computeLayout(connectors, wires)
+  // Create synthetic wires for pigtail connectors
+  const syntheticWires: Wire[] = []
+  const pigtailConnectors = connectors.filter((c) => c.pigtail)
+  
+  for (const pigtail of pigtailConnectors) {
+    const hiddenId = `${pigtail.connector_id}_PIGTAIL_END`
+    const pigtailWires = wires.filter(
+      (w) => w.from_connector === pigtail.connector_id || w.to_connector === pigtail.connector_id
+    )
+    
+    // Create synthetic wires from pigtail connector to hidden end connector
+    const pinMap = new Map<string, Wire>()
+    for (const wire of pigtailWires) {
+      const isFrom = wire.from_connector === pigtail.connector_id
+      const pin = isFrom ? wire.from_pin : wire.to_pin
+      pinMap.set(String(pin), wire)
+    }
+    
+    for (const [pin, originalWire] of pinMap) {
+      const syntheticWire: Wire = {
+        wire_id: `${pigtail.connector_id}_PIGTAIL_${pin}`,
+        from_connector: pigtail.connector_id,
+        from_pin: pin,
+        to_connector: hiddenId,
+        to_pin: pin,
+        wire_color: originalWire.wire_color,
+        gauge: originalWire.gauge,
+        signal_name: originalWire.signal_name,
+        twist_group: originalWire.twist_group,
+        shield_group: originalWire.shield_group,
+        overall_shield: originalWire.overall_shield,
+      }
+      syntheticWires.push(syntheticWire)
+    }
+  }
+  
+  const allWires = [...wires, ...syntheticWires]
+  const layout = computeLayout(connectors, allWires)
   type Routed = {
     wire: Wire
     from: NonNullable<ReturnType<typeof findPin>>
@@ -591,7 +628,7 @@ export function computeScene(
   }
   const routed: Routed[] = []
   const unrouted: Wire[] = []
-  for (const wire of wires) {
+  for (const wire of allWires) {
     const fromLayout = layout.byId.get(wire.from_connector)
     const toLayout = layout.byId.get(wire.to_connector)
     const from = findPin(fromLayout, wire.from_pin)
@@ -1161,25 +1198,27 @@ export function computeScene(
     })
   }
 
-  const sceneConnectors: SceneConnector[] = layout.connectors.map((c) => ({
-    id: c.connector.connector_id,
-    name: c.connector.connector_name,
-    x: c.x,
-    y: c.y,
-    width: c.width,
-    height: c.height,
-    pins: c.pins.map((p) => ({
-      pin: p.pin,
-      signal: p.signal,
-      x: p.x,
-      y: p.y,
-      labelX: p.labelX,
-      labelY: p.labelY,
-      signalX: p.signalX,
-      signalAnchor: p.signalAnchor,
-      error: options.duplicatePins.has(`${c.connector.connector_id}:${p.pin}`),
-    })),
-  }))
+  const sceneConnectors: SceneConnector[] = layout.connectors
+    .filter((c) => !c.connector.connector_id.endsWith('_PIGTAIL_END'))
+    .map((c) => ({
+      id: c.connector.connector_id,
+      name: c.connector.connector_name,
+      x: c.x,
+      y: c.y,
+      width: c.width,
+      height: c.height,
+      pins: c.pins.map((p) => ({
+        pin: p.pin,
+        signal: p.signal,
+        x: p.x,
+        y: p.y,
+        labelX: p.labelX,
+        labelY: p.labelY,
+        signalX: p.signalX,
+        signalAnchor: p.signalAnchor,
+        error: options.duplicatePins.has(`${c.connector.connector_id}:${p.pin}`),
+      })),
+    }))
 
   deoverlapLabels(sceneWires)
 
