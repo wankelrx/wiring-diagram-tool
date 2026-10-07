@@ -50,6 +50,7 @@ const PATHS = {
   ],
   plus: ['M5 12h14', 'M12 5v14'],
   minus: ['M5 12h14'],
+  expand: ['M15 3h6v6', 'M9 21H3v-6', 'M21 3l-7 7', 'M3 21l7-7'],
   x: ['M18 6L6 18', 'M6 6l12 12'],
   trash: [
     'M3 6h18',

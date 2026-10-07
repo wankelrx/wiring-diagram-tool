@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { resolveWireColor } from '../colors'
 import type { Connector, DrawingMeta, ValidationError, Wire } from '../types'
 import { firstFreePin, firstFreePins } from '../validation'
@@ -53,14 +53,18 @@ function SectionHeader({
   count,
   onAdd,
   addLabel,
+  actions,
+  className = 'mb-2.5',
 }: {
   title: string
   count?: number
   onAdd?: () => void
   addLabel?: string
+  actions?: ReactNode
+  className?: string
 }) {
   return (
-    <div className="mb-2.5 flex items-center justify-between">
+    <div className={`flex items-center justify-between ${className}`}>
       <div className="flex items-center gap-2">
         <h2 className="eyebrow">{title}</h2>
         {count !== undefined ? (
@@ -69,17 +73,20 @@ function SectionHeader({
           </span>
         ) : null}
       </div>
-      {onAdd ? (
-        <button
-          type="button"
-          className="btn btn-sm"
-          onClick={onAdd}
-          aria-label={addLabel}
-        >
-          <Icon name="plus" size={13} />
-          Add
-        </button>
-      ) : null}
+      <div className="flex items-center gap-1.5">
+        {onAdd ? (
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={onAdd}
+            aria-label={addLabel}
+          >
+            <Icon name="plus" size={13} />
+            Add
+          </button>
+        ) : null}
+        {actions}
+      </div>
     </div>
   )
 }
@@ -173,10 +180,20 @@ export function DataPanel({
     refErrors.map((error) => error.wire_id).filter(Boolean) as string[],
   )
   const focusedRef = useRef<HTMLTableRowElement | null>(null)
+  const [wiresExpanded, setWiresExpanded] = useState(false)
 
   useEffect(() => {
     focusedRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [focusedWireId, selectedConnectorId])
+  }, [focusedWireId, selectedConnectorId, wiresExpanded])
+
+  useEffect(() => {
+    if (!wiresExpanded) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setWiresExpanded(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [wiresExpanded])
 
   function updateConnector(index: number, patch: Partial<Connector>) {
     const previous = connectors[index]
@@ -432,14 +449,49 @@ export function DataPanel({
         )}
       </section>
 
-      <section className="card p-3.5">
+      {wiresExpanded ? (
+        <div
+          className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-[1px]"
+          aria-hidden="true"
+          onClick={() => setWiresExpanded(false)}
+        />
+      ) : null}
+      <section
+        className={
+          wiresExpanded
+            ? 'card fixed inset-4 z-50 flex flex-col p-4 shadow-float sm:inset-8'
+            : 'card p-3.5'
+        }
+        role={wiresExpanded ? 'dialog' : undefined}
+        aria-modal={wiresExpanded ? true : undefined}
+        aria-label={wiresExpanded ? 'Wires table' : undefined}
+      >
         <SectionHeader
           title="Wires"
           count={wires.length}
           onAdd={addWire}
           addLabel="Add wire"
+          actions={
+            <button
+              type="button"
+              className="btn btn-sm w-7 px-0!"
+              aria-label={wiresExpanded ? 'Close expanded wires table' : 'Expand wires table'}
+              title={
+                wiresExpanded
+                  ? 'Close (Esc)'
+                  : 'Pop out to show every row without scrolling'
+              }
+              onClick={() => setWiresExpanded((open) => !open)}
+            >
+              <Icon name={wiresExpanded ? 'x' : 'expand'} size={13} />
+            </button>
+          }
         />
-        <div className="max-h-[28rem] overflow-auto rounded-lg border border-slate-200 dark:border-slate-800">
+        <div
+          className={`overflow-auto rounded-lg border border-slate-200 dark:border-slate-800 ${
+            wiresExpanded ? 'min-h-0 flex-1' : 'max-h-[28rem]'
+          }`}
+        >
           <table className="w-full border-collapse text-left text-xs">
             <thead>
               <tr>
