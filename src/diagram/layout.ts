@@ -121,6 +121,52 @@ function connectionOrder(connectors: Connector[], wires: Wire[]): Connector[] {
   return order.map((id) => byId.get(id)!).filter(Boolean)
 }
 
+/**
+ * Pin rows in display order. Pins whose wires are twisted together are pulled
+ * next to each other (the group sits where its first pin would be), so an
+ * untwisted wire never ends up drawn between the members of a twist.
+ */
+export function displayPinOrder(
+  connector: Connector,
+  wires: Wire[],
+  labels: string[],
+): string[] {
+  const groupOf = new Map<string, string>()
+  for (const wire of wires) {
+    const group = wire.twist_group?.trim()
+    if (!group) continue
+    const ends = [
+      { here: wire.from_connector, pin: wire.from_pin, mate: wire.to_connector },
+      { here: wire.to_connector, pin: wire.to_pin, mate: wire.from_connector },
+    ]
+    for (const end of ends) {
+      if (end.here !== connector.connector_id) continue
+      const pin = String(end.pin ?? '').trim()
+      if (!pin || groupOf.has(pin)) continue
+      groupOf.set(pin, `${group}\u001f${end.mate}`)
+    }
+  }
+  if (!groupOf.size) return labels
+
+  const members = new Map<string, string[]>()
+  for (const pin of labels) {
+    const key = groupOf.get(pin)
+    if (key) members.set(key, [...(members.get(key) ?? []), pin])
+  }
+  const ordered: string[] = []
+  const emitted = new Set<string>()
+  for (const pin of labels) {
+    if (emitted.has(pin)) continue
+    const key = groupOf.get(pin)
+    const run = key ? members.get(key)! : [pin]
+    for (const member of run) {
+      emitted.add(member)
+      ordered.push(member)
+    }
+  }
+  return ordered
+}
+
 export const CONNECTOR_GAP = 90
 export const CONNECTOR_MARGIN = 32
 
@@ -220,7 +266,11 @@ export function computeLayout(
   }
 
   for (const layout of placed) {
-    const labels = pinLabelsFor(layout.connector, wires)
+    const labels = displayPinOrder(
+      layout.connector,
+      wires,
+      pinLabelsFor(layout.connector, wires),
+    )
     const signals = pinSignalMap(layout.connector, wires)
     layout.height = connectorHeight(labels.length)
     const selfCenter = layout.x + layout.width / 2
