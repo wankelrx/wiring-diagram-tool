@@ -78,6 +78,10 @@ export type SceneShield = {
   outlinePath: string
   /** Inner pair/foil shield vs outer cable jacket shield. */
   kind: 'pair' | 'overall'
+  /** For pigtail connectors: point where shield terminates at connector body */
+  terminationPoint?: Point
+  /** For pigtail connectors: connector ID where shield terminates */
+  terminationConnectorId?: string
 }
 
 export type SceneFrame = {
@@ -1098,6 +1102,39 @@ export function computeScene(
       if (!envelope) continue
       pairHalfWidth.set(shieldId, envelope.halfWidth)
       pairTube.set(shieldId, envelope.tube)
+      
+      // Check if this is a pigtail connector with shield-to-body enabled
+      const [leftId, rightId] = id.split('--')
+      const leftConnector = connectors.find((c) => c.connector_id === leftId)
+      const rightConnector = connectors.find((c) => c.connector_id === rightId)
+      const pigtailConnector = leftConnector?.pigtail ? leftConnector : rightConnector?.pigtail ? rightConnector : null
+      
+      let terminationPoint: Point | undefined
+      let terminationConnectorId: string | undefined
+      
+      if (pigtailConnector?.pigtail_shield_to_body && envelope.tube.length >= 2) {
+        // Find the connector layout for the pigtail
+        const connectorLayout = layout.byId.get(pigtailConnector.connector_id)
+        if (connectorLayout) {
+          // Use the first point of the shield tube (closest to connector)
+          const firstPoint = envelope.tube[0]!
+          const lastPoint = envelope.tube[envelope.tube.length - 1]!
+          
+          // Determine which end is closer to the pigtail connector
+          const distToFirst = Math.hypot(
+            firstPoint.x - (connectorLayout.x + connectorLayout.width / 2),
+            firstPoint.y - (connectorLayout.y + connectorLayout.height / 2)
+          )
+          const distToLast = Math.hypot(
+            lastPoint.x - (connectorLayout.x + connectorLayout.width / 2),
+            lastPoint.y - (connectorLayout.y + connectorLayout.height / 2)
+          )
+          
+          terminationPoint = distToFirst < distToLast ? firstPoint : lastPoint
+          terminationConnectorId = pigtailConnector.connector_id
+        }
+      }
+      
       sceneShields.push({
         id: `${id}::${shieldId}`,
         points: envelope.tube,
@@ -1105,6 +1142,8 @@ export function computeScene(
         outline: envelope.outline,
         outlinePath: polylinePath(envelope.outline),
         kind: 'pair',
+        terminationPoint,
+        terminationConnectorId,
       })
     }
 
@@ -1146,6 +1185,39 @@ export function computeScene(
           .flatMap((w) => [w.points[0]!, w.points[w.points.length - 1]!]),
       )
       if (!envelope) continue
+      
+      // Check if this is a pigtail connector with shield-to-body enabled
+      const [leftId, rightId] = id.split('--')
+      const leftConnector = connectors.find((c) => c.connector_id === leftId)
+      const rightConnector = connectors.find((c) => c.connector_id === rightId)
+      const pigtailConnector = leftConnector?.pigtail ? leftConnector : rightConnector?.pigtail ? rightConnector : null
+      
+      let terminationPoint: Point | undefined
+      let terminationConnectorId: string | undefined
+      
+      if (pigtailConnector?.pigtail_shield_to_body && envelope.tube.length >= 2) {
+        // Find the connector layout for the pigtail
+        const connectorLayout = layout.byId.get(pigtailConnector.connector_id)
+        if (connectorLayout) {
+          // Use the first point of the shield tube (closest to connector)
+          const firstPoint = envelope.tube[0]!
+          const lastPoint = envelope.tube[envelope.tube.length - 1]!
+          
+          // Determine which end is closer to the pigtail connector
+          const distToFirst = Math.hypot(
+            firstPoint.x - (connectorLayout.x + connectorLayout.width / 2),
+            firstPoint.y - (connectorLayout.y + connectorLayout.height / 2)
+          )
+          const distToLast = Math.hypot(
+            lastPoint.x - (connectorLayout.x + connectorLayout.width / 2),
+            lastPoint.y - (connectorLayout.y + connectorLayout.height / 2)
+          )
+          
+          terminationPoint = distToFirst < distToLast ? firstPoint : lastPoint
+          terminationConnectorId = pigtailConnector.connector_id
+        }
+      }
+      
       sceneShields.push({
         id: `${id}::overall::${overallId}`,
         points: envelope.tube,
@@ -1153,6 +1225,8 @@ export function computeScene(
         outline: envelope.outline,
         outlinePath: polylinePath(envelope.outline),
         kind: 'overall',
+        terminationPoint,
+        terminationConnectorId,
       })
     }
   }

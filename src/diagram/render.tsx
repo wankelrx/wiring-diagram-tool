@@ -155,6 +155,36 @@ export function DiagramSvg({
               strokeLinejoin="round"
               strokeDasharray={overall ? '14 5 3 5' : '6 4'}
             />
+            {shield.terminationPoint && (
+              <g>
+                {/* Ground symbol at shield termination */}
+                <circle
+                  cx={shield.terminationPoint.x}
+                  cy={shield.terminationPoint.y}
+                  r={6}
+                  fill={theme.background}
+                  stroke={overall ? theme.overallShieldStroke : theme.shieldStroke}
+                  strokeWidth={1.5}
+                />
+                {/* Ground symbol lines */}
+                <line
+                  x1={shield.terminationPoint.x}
+                  y1={shield.terminationPoint.y - 8}
+                  x2={shield.terminationPoint.x}
+                  y2={shield.terminationPoint.y + 8}
+                  stroke={overall ? theme.overallShieldStroke : theme.shieldStroke}
+                  strokeWidth={1.5}
+                />
+                <line
+                  x1={shield.terminationPoint.x - 6}
+                  y1={shield.terminationPoint.y}
+                  x2={shield.terminationPoint.x + 6}
+                  y2={shield.terminationPoint.y}
+                  stroke={overall ? theme.overallShieldStroke : theme.shieldStroke}
+                  strokeWidth={1.5}
+                />
+              </g>
+            )}
           </g>
         )
       })}
