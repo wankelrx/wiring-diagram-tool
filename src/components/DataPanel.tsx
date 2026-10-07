@@ -359,6 +359,9 @@ export function DataPanel({
                   <Th className="w-16 pl-2.5">ID</Th>
                   <Th>Name</Th>
                   <Th className="w-16">Pins</Th>
+                  <Th className="w-16">Pigtail</Th>
+                  <Th className="w-16">Length</Th>
+                  <Th className="w-16">Shield</Th>
                   <Th className="w-8" />
                 </tr>
               </thead>
@@ -412,6 +415,59 @@ export function DataPanel({
                           }}
                         />
                       </td>
+                      <td className="px-0.5 py-1 text-center">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800"
+                          checked={row.pigtail ?? false}
+                          aria-label="Pigtail"
+                          title="Pigtail connector"
+                          onChange={(event) => {
+                            onEditStart()
+                            updateConnector(index, { pigtail: event.target.checked })
+                          }}
+                        />
+                      </td>
+                      {row.pigtail ? (
+                        <>
+                          <td className="px-0.5 py-1">
+                            <Cell
+                              mono
+                              type="number"
+                              value={row.pigtail_length ?? 100}
+                              ariaLabel="Pigtail length"
+                              placeholder="Length"
+                              onFocus={onEditStart}
+                              onChange={(value) => {
+                                const n = Number(value)
+                                updateConnector(index, {
+                                  pigtail_length: Number.isFinite(n) ? n : 100,
+                                })
+                              }}
+                            />
+                          </td>
+                          <td className="px-0.5 py-1 text-center">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800"
+                              checked={row.pigtail_shield_to_body ?? false}
+                              aria-label="Shield to body"
+                              title="Connect shields to connector body"
+                              onChange={(event) => {
+                                onEditStart()
+                                updateConnector(index, {
+                                  pigtail_shield_to_body: event.target.checked,
+                                })
+                              }}
+                            />
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-0.5 py-1" />
+                          <td className="px-0.5 py-1" />
+                        </>
+                      )}
                       <td className="py-1 pr-1.5 text-right">
                         <DeleteButton
                           label={`Delete connector ${row.connector_id}`}

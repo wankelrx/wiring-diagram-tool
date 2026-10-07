@@ -114,7 +114,22 @@ export function computeLayout(
   connectors: Connector[],
   wires: Wire[],
 ): LayoutResult {
-  const ordered = connectionOrder(connectors, wires)
+  // Create hidden connectors for pigtails
+  const hiddenConnectors: Connector[] = []
+  const pigtailConnectors = connectors.filter((c) => c.pigtail)
+  
+  for (const pigtail of pigtailConnectors) {
+    const hiddenId = `${pigtail.connector_id}_PIGTAIL_END`
+    const hiddenConnector: Connector = {
+      connector_id: hiddenId,
+      connector_name: 'Pigtail End',
+      pin_count: pigtail.pin_count,
+    }
+    hiddenConnectors.push(hiddenConnector)
+  }
+  
+  const allConnectors = [...connectors, ...hiddenConnectors]
+  const ordered = connectionOrder(allConnectors, wires)
   const cols = Math.max(1, Math.min(ordered.length, 3))
   const colW = 480
   const startX = 64
@@ -123,6 +138,7 @@ export function computeLayout(
   // Per-column cursors so auto-placed boxes of varying height never overlap.
   const colBottoms = new Array<number>(cols).fill(startY)
 
+  // First pass: place regular connectors
   const placed: ConnectorLayout[] = ordered.map((connector, index) => {
     const hasX = connector.position_x !== undefined && connector.position_x !== null
     const hasY = connector.position_y !== undefined && connector.position_y !== null
@@ -131,6 +147,7 @@ export function computeLayout(
     const signals = pinSignalMap(connector, wires)
     const height = connectorHeight(labels.length)
     const width = connectorWidth(connector, labels, signals)
+    
     const x = hasX ? Number(connector.position_x) : startX + col * colW
     let y: number
     if (hasY) {
@@ -149,6 +166,21 @@ export function computeLayout(
       pins: [],
     }
   })
+  
+  // Second pass: position hidden pigtail connectors
+  for (const layout of placed) {
+    const isPigtailEnd = layout.connector.connector_id.endsWith('_PIGTAIL_END')
+    if (isPigtailEnd) {
+      const originalId = layout.connector.connector_id.replace('_PIGTAIL_END', '')
+      const originalConnector = placed.find((c) => c.connector.connector_id === originalId)
+      if (originalConnector) {
+        const pigtailLength = originalConnector.connector.pigtail_length ?? 100
+        layout.x = originalConnector.x + originalConnector.width + pigtailLength
+        layout.y = originalConnector.y
+        layout.pinSide = 'left'
+      }
+    }
+  }
 
   for (let pass = 0; pass < 3; pass++) {
     resolveConnectorCollisions(placed, CONNECTOR_MARGIN)

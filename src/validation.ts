@@ -160,6 +160,10 @@ export function validateDataset(
       },
     ]
     for (const end of ends) {
+      // Skip validation for pigtail end connectors as they're virtual
+      const isPigtailEnd = end.connectorId?.endsWith('_PIGTAIL_END')
+      if (isPigtailEnd) continue
+      
       if (!end.connectorId) {
         refErrors.push({
           kind: 'missing_ref',
