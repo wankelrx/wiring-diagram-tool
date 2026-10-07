@@ -110,6 +110,9 @@ export function TopBar({
   onShowCableIds,
   onDark,
   onImport,
+  onSave,
+  backups,
+  onRestoreBackup,
   onTemplate,
   onFit,
   onArrange,
@@ -123,6 +126,7 @@ export function TopBar({
   onExportDxf,
   onExportWireCsv,
   onExportWireXlsx,
+  onExportProjectXlsx,
 }: {
   showLabels: boolean
   showCableIds: boolean
@@ -135,6 +139,9 @@ export function TopBar({
   onShowCableIds: (value: boolean) => void
   onDark: (value: boolean) => void
   onImport: (files: FileList) => void
+  onSave: () => void
+  backups: Array<{ id: number; label: string }>
+  onRestoreBackup: (id: number) => void
   onTemplate: () => void
   onFit: () => void
   onArrange: () => void
@@ -148,9 +155,30 @@ export function TopBar({
   onExportDxf: () => void
   onExportWireCsv: () => void
   onExportWireXlsx: () => void
+  onExportProjectXlsx: () => void
 }) {
   const [exportOpen, setExportOpen] = useState(false)
   const exportRef = useRef<HTMLDivElement | null>(null)
+  const [recoverOpen, setRecoverOpen] = useState(false)
+  const recoverRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!recoverOpen) return
+    const onDoc = (event: MouseEvent) => {
+      if (!recoverRef.current?.contains(event.target as Node)) {
+        setRecoverOpen(false)
+      }
+    }
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRecoverOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [recoverOpen])
 
   useEffect(() => {
     if (!exportOpen) return
@@ -201,14 +229,17 @@ export function TopBar({
         New
       </ToolbarButton>
 
-      <label className="cursor-pointer" title="Import a wire list (.xlsx or .csv)">
+      <label
+        className="cursor-pointer"
+        title="Open a saved project (.json), workbook (.xlsx) or wire list (.csv)"
+      >
         <span className="btn">
           <Icon name="upload" size={15} />
           Import
         </span>
         <input
           type="file"
-          accept=".xlsx,.csv"
+          accept=".json,.xlsx,.csv"
           multiple
           className="hidden"
           onChange={(event) => {
@@ -217,6 +248,50 @@ export function TopBar({
           }}
         />
       </label>
+
+      <ToolbarButton
+        icon="download"
+        onClick={onSave}
+        title="Save the whole drawing to a file you can reopen with Import"
+      >
+        Save
+      </ToolbarButton>
+
+      {backups.length > 0 ? (
+        <div className="relative" ref={recoverRef}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            aria-haspopup="menu"
+            aria-expanded={recoverOpen}
+            title="Restore an automatic backup of an earlier version"
+            onClick={() => setRecoverOpen((open) => !open)}
+          >
+            <Icon name="undo" size={15} />
+            Recover
+            <Icon name="chevronDown" size={13} className="-mr-0.5 opacity-80" />
+          </button>
+          {recoverOpen ? (
+            <div
+              role="menu"
+              className="card absolute left-0 top-full z-30 mt-1.5 max-h-96 w-80 overflow-auto p-1 shadow-float"
+            >
+              <div className="eyebrow px-2.5 pb-1 pt-1.5">Automatic backups</div>
+              {backups.map((backup) => (
+                <MenuItem
+                  key={backup.id}
+                  onClick={() => {
+                    setRecoverOpen(false)
+                    onRestoreBackup(backup.id)
+                  }}
+                >
+                  {backup.label}
+                </MenuItem>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="relative" ref={exportRef}>
         <button
@@ -248,6 +323,14 @@ export function TopBar({
             </MenuItem>
             <MenuItem hint="dxf" onClick={() => run(onExportDxf)}>
               CAD drawing
+            </MenuItem>
+            <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+            <div className="eyebrow px-2.5 pb-1 pt-1.5">Project</div>
+            <MenuItem hint="json" onClick={() => run(onSave)}>
+              Project file
+            </MenuItem>
+            <MenuItem hint="xlsx" onClick={() => run(onExportProjectXlsx)}>
+              Project workbook
             </MenuItem>
             <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
             <div className="eyebrow px-2.5 pb-1 pt-1.5">Wire list</div>

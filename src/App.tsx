@@ -17,14 +17,29 @@ import {
   downloadPdf,
   downloadPng,
   downloadSvg,
+  downloadProjectFile,
   downloadTemplate,
+  exportProjectXlsx,
   exportWireListCsv,
   exportWireListXlsx,
+  inferConnectors,
   parseFiles,
 } from './importExport'
 import { SAMPLE_CONNECTORS, SAMPLE_WIRES } from './sampleData'
 import { autoArrangeConnectors } from './autoArrange'
-import { clearProject, loadProject, saveProject } from './storage'
+import {
+  addBackup,
+  clearProject,
+  listBackups,
+  loadProject,
+  projectContent,
+  saveProject,
+  serializeProjectFile,
+  STORAGE_KEY,
+  parseProjectText,
+  type Backup,
+  type PersistedProject,
+} from './storage'
 import type { Connector, DrawingMeta, ValidationError, Wire } from './types'
 import { validateDataset } from './validation'
 
@@ -35,6 +50,13 @@ type Snapshot = {
 }
 
 const saved = loadProject()
+if (saved) addBackup(saved)
+
+function backupLabel(backup: Backup): string {
+  const when = new Date(backup.savedAt).toLocaleString()
+  const { connectors, wires } = backup.project
+  return `${when} - ${connectors.length} conn, ${wires.length} wires`
+}
 
 export default function App() {
   const [connectors, setConnectors] = useState<Connector[]>(
@@ -82,16 +104,110 @@ export default function App() {
   const futureRef = useRef(future)
   futureRef.current = future
 
+  const [backups, setBackups] = useState<Backup[]>(() => listBackups())
+  const [conflict, setConflict] = useState<PersistedProject | null>(null)
+  const project: PersistedProject = {
+    connectors,
+    wires,
+    meta,
+    dark,
+    showLabels,
+    showCableIds,
+  }
+  const projectRef = useRef(project)
+  projectRef.current = project
+  const lastWrittenRef = useRef(JSON.stringify(project))
+  const initialJsonRef = useRef(lastWrittenRef.current)
+  const conflictRef = useRef(conflict)
+  conflictRef.current = conflict
+
+  function backUp(target: PersistedProject) {
+    setBackups(addBackup(target))
+  }
+
+  // Autosave, but never while another tab holds a different version: the user
+  // picks which one wins first, so two open tabs cannot silently overwrite
+  // each other.
   useEffect(() => {
-    saveProject({
-      connectors,
-      wires,
-      meta,
-      dark,
-      showLabels,
-      showCableIds,
-    })
-  }, [connectors, wires, meta, dark, showLabels, showCableIds])
+    if (conflict) return
+    const json = JSON.stringify(projectRef.current)
+    if (json === lastWrittenRef.current) return
+    lastWrittenRef.current = json
+    saveProject(projectRef.current)
+  }, [conflict, connectors, wires, meta, dark, showLabels, showCableIds])
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY || !event.newValue) return
+      const theirs = parseProjectText(event.newValue)
+      if (!theirs) return
+      const mine = projectRef.current
+      if (projectContent(theirs) === projectContent(mine)) return
+      backUp(theirs)
+      setConflict(theirs)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  useEffect(() => {
+    const snapshot = () => {
+      if (conflictRef.current) return
+      if (JSON.stringify(projectRef.current) === initialJsonRef.current) return
+      backUp(projectRef.current)
+    }
+    const timer = window.setInterval(snapshot, 60_000)
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') snapshot()
+    }
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('pagehide', snapshot)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('pagehide', snapshot)
+    }
+  }, [])
+
+  function applyProject(next: PersistedProject, message: string) {
+    checkpoint()
+    setConnectors(next.connectors)
+    setWires(next.wires)
+    setMeta(next.meta)
+    setSelectedConnectorId(next.connectors[0]?.connector_id ?? null)
+    setImportErrors([])
+    setFitNonce((n) => n + 1)
+    setStatus(message)
+  }
+
+  function keepMine() {
+    const mine = projectRef.current
+    setConflict(null)
+    lastWrittenRef.current = JSON.stringify(mine)
+    saveProject(mine)
+  }
+
+  function useTheirs() {
+    if (!conflict) return
+    backUp(projectRef.current)
+    applyProject(conflict, 'Loaded the version from the other tab.')
+    setConflict(null)
+  }
+
+  function restoreBackup(index: number) {
+    const backup = backups[index]
+    if (!backup) return
+    backUp(projectRef.current)
+    applyProject(backup.project, 'Restored backup. Undo to go back.')
+  }
+
+  function saveProjectFile() {
+    downloadProjectFile(
+      serializeProjectFile(projectRef.current),
+      drawingFilename(meta, 'json'),
+    )
+    setStatus('Saved project file. Reopen it with Import.')
+  }
 
   function sameSnapshot(a: Snapshot, b: Snapshot) {
     return (
@@ -163,14 +279,24 @@ export default function App() {
     try {
       const parsed = await parseFiles([...files])
       checkpoint()
+      backUp(projectRef.current)
+      let message = 'Imported file.'
       if (parsed.connectors) setConnectors(parsed.connectors)
+      else if (parsed.wires) {
+        const missing = inferConnectors(parsed.wires, connectors)
+        if (missing.length) {
+          setConnectors([...connectors, ...missing])
+          message = `Imported wires and rebuilt ${missing.length} connector${missing.length === 1 ? '' : 's'} from them (names and positions were not in the file).`
+        }
+      }
       if (parsed.wires) setWires(parsed.wires)
-      setImportErrors(parsed.errors)
+      if (parsed.meta) setMeta(parsed.meta)
+      setImportErrors(parsed.errors.filter((e) => !(parsed.wires && e.message.startsWith('No Connectors sheet'))))
       setFitNonce((n) => n + 1)
       if (parsed.connectors?.[0]) {
         setSelectedConnectorId(parsed.connectors[0].connector_id)
       }
-      setStatus('Imported spreadsheet.')
+      setStatus(message)
     } catch (error) {
       setImportErrors([
         {
@@ -217,6 +343,7 @@ export default function App() {
 
   function resetSample() {
     checkpoint()
+    backUp(projectRef.current)
     clearProject()
     setConnectors(SAMPLE_CONNECTORS)
     setWires(SAMPLE_WIRES)
@@ -229,6 +356,7 @@ export default function App() {
 
   function newDiagram() {
     checkpoint()
+    backUp(projectRef.current)
     setConnectors([])
     setWires([])
     setMeta({
@@ -272,6 +400,9 @@ export default function App() {
           onShowCableIds={setShowCableIds}
           onDark={setDark}
           onImport={onImport}
+          onSave={saveProjectFile}
+          backups={backups.map((backup, id) => ({ id, label: backupLabel(backup) }))}
+          onRestoreBackup={restoreBackup}
           onTemplate={() => {
             void downloadTemplate().catch(reportExportError)
           }}
@@ -315,6 +446,14 @@ export default function App() {
           onExportWireCsv={() =>
             exportWireListCsv(wires, drawingFilename(meta, 'csv'))
           }
+          onExportProjectXlsx={() => {
+            void exportProjectXlsx(
+              connectors,
+              wires,
+              meta,
+              drawingFilename(meta, 'xlsx'),
+            ).catch(reportExportError)
+          }}
           onExportWireXlsx={() => {
             void exportWireListXlsx(
               wires,
@@ -322,6 +461,26 @@ export default function App() {
             ).catch(reportExportError)
           }}
         />
+        {conflict ? (
+          <div
+            role="alert"
+            className="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100"
+          >
+            <Icon name="alert" size={15} className="shrink-0" />
+            <span>
+              This drawing was changed in another tab. Automatic saving is paused
+              here until you choose. Both versions are kept under Recover.
+            </span>
+            <div className="ml-auto flex gap-2">
+              <button type="button" className="btn btn-sm" onClick={useTheirs}>
+                Load the other tab&apos;s version
+              </button>
+              <button type="button" className="btn btn-sm btn-primary" onClick={keepMine}>
+                Keep this tab&apos;s version
+              </button>
+            </div>
+          </div>
+        ) : null}
         {pendingExport ? (
           <div
             role="alert"

@@ -1,4 +1,6 @@
-import type { Connector, ValidationError, Wire } from './types'
+import { DEFAULT_DRAWING_META } from './documentMeta'
+import { parseProjectText } from './storage'
+import type { Connector, DrawingMeta, ValidationError, Wire } from './types'
 
 export const MAX_IMPORT_BYTES = 8 * 1024 * 1024
 export const MAX_IMPORT_ROWS = 10_000
@@ -147,6 +149,7 @@ function parseWires(rows: Record<string, unknown>[]): Wire[] {
 export type ImportResult = {
   connectors?: Connector[]
   wires?: Wire[]
+  meta?: DrawingMeta
   errors: ValidationError[]
 }
 
@@ -194,6 +197,28 @@ export function parseCsvText(text: string): unknown[][] {
   return rows
 }
 
+const META_KEYS: Array<keyof DrawingMeta> = [
+  'title',
+  'drawingNumber',
+  'revision',
+  'date',
+  'author',
+  'notes',
+]
+
+function parseDrawingSheet(sheet: SheetAoa | undefined): DrawingMeta | undefined {
+  if (!sheet) return undefined
+  const meta: DrawingMeta = { ...DEFAULT_DRAWING_META }
+  let found = false
+  for (const row of sheet.rows) {
+    const key = cell(row[0]) as keyof DrawingMeta
+    if (!META_KEYS.includes(key)) continue
+    meta[key] = cell(row[1])
+    found = true
+  }
+  return found ? meta : undefined
+}
+
 export function parseSheets(sheets: SheetAoa[]): ImportResult {
   const errors: ValidationError[] = []
   let connectors: Connector[] | undefined
@@ -215,6 +240,10 @@ export function parseSheets(sheets: SheetAoa[]): ImportResult {
       wires = parseWires(aoaToObjects(sheet.rows))
     }
   }
+
+  const meta = parseDrawingSheet(
+    sheets.find((sheet) => sheet.name.toLowerCase() === 'drawing'),
+  )
 
   const connectorRows = connectors?.length ?? 0
   const wireRows = wires?.length ?? 0
@@ -247,7 +276,7 @@ export function parseSheets(sheets: SheetAoa[]): ImportResult {
     }
   }
 
-  return { connectors, wires, errors }
+  return { connectors, wires, meta, errors }
 }
 
 function mergeById<T>(
@@ -267,8 +296,14 @@ function mergeById<T>(
 }
 
 async function loadExcelJS() {
-  const mod = await import('exceljs')
-  return (mod.default ?? mod) as typeof import('exceljs')
+  try {
+    const mod = await import('exceljs')
+    return (mod.default ?? mod) as typeof import('exceljs')
+  } catch {
+    throw new Error(
+      'The spreadsheet library could not be loaded. This tab is probably from an older version of the app (or you are offline) - reload the page and try again. Your drawing is saved automatically and will still be here.',
+    )
+  }
 }
 
 async function sheetsFromXlsx(buffer: ArrayBuffer): Promise<SheetAoa[]> {
@@ -297,6 +332,16 @@ export async function parseFiles(files: File[]): Promise<ImportResult> {
     }
     const name = file.name.toLowerCase()
     try {
+      if (name.endsWith('.json') || file.type.includes('json')) {
+        const project = parseProjectText(await file.text())
+        if (!project) {
+          throw new Error('not a saved wiring diagram project')
+        }
+        merged.connectors = project.connectors
+        merged.wires = project.wires
+        merged.meta = project.meta
+        continue
+      }
       let sheets: SheetAoa[]
       if (name.endsWith('.csv') || file.type.includes('csv')) {
         sheets = [{ name: file.name, rows: parseCsvText(await file.text()) }]
@@ -311,6 +356,7 @@ export async function parseFiles(files: File[]): Promise<ImportResult> {
         (row) => row.connector_id,
       )
       merged.wires = mergeById(merged.wires, parsed.wires, (row) => row.wire_id)
+      if (parsed.meta) merged.meta = parsed.meta
     } catch (error) {
       merged.errors.push({
         kind: 'import',
@@ -340,6 +386,48 @@ function wireRows(wires: Wire[]): unknown[][] {
       wire.shield_pin_to ?? '',
     ]),
   ]
+}
+
+function connectorRows(connectors: Connector[]): unknown[][] {
+  return [
+    [...CONNECTOR_HEADERS],
+    ...connectors.map((c) => [
+      c.connector_id,
+      c.connector_name,
+      c.pin_count,
+      c.position_x ?? '',
+      c.position_y ?? '',
+      c.pigtail ? 'yes' : '',
+      c.pigtail ? (c.pigtail_length ?? '') : '',
+      (c.shield_to_body ?? c.pigtail_shield_to_body) ? 'yes' : '',
+    ]),
+  ]
+}
+
+/**
+ * Connectors a wire list refers to that do not exist yet, so a wire-only
+ * spreadsheet can still be turned back into a drawing.
+ */
+export function inferConnectors(wires: Wire[], existing: Connector[]): Connector[] {
+  const known = new Set(existing.map((c) => c.connector_id))
+  const maxPin = new Map<string, number>()
+  for (const wire of wires) {
+    const ends: Array<[string, unknown]> = [
+      [wire.from_connector, wire.from_pin],
+      [wire.to_connector, wire.to_pin],
+    ]
+    for (const [id, pin] of ends) {
+      const key = String(id ?? '').trim()
+      if (!key || known.has(key)) continue
+      const n = /^\d+$/.test(String(pin ?? '').trim()) ? Number(pin) : 0
+      maxPin.set(key, Math.max(maxPin.get(key) ?? 0, n))
+    }
+  }
+  return [...maxPin].map(([id, pins]) => ({
+    connector_id: id,
+    connector_name: id,
+    pin_count: Math.max(pins, 1),
+  }))
 }
 
 async function writeXlsx(sheets: Array<{ name: string; rows: unknown[][] }>, filename: string) {
@@ -379,6 +467,30 @@ export async function downloadTemplate() {
 
 export async function exportWireListXlsx(wires: Wire[], filename = 'wire-list.xlsx') {
   await writeXlsx([{ name: 'Wire List', rows: wireRows(wires) }], filename)
+}
+
+/** Whole drawing as a workbook that Import restores (connectors, wires, title block). */
+export async function exportProjectXlsx(
+  connectors: Connector[],
+  wires: Wire[],
+  meta: DrawingMeta,
+  filename = 'wiring-diagram.xlsx',
+) {
+  await writeXlsx(
+    [
+      { name: 'Connectors', rows: connectorRows(connectors) },
+      { name: 'Wires', rows: wireRows(wires) },
+      {
+        name: 'Drawing',
+        rows: META_KEYS.map((key) => [key, meta[key] ?? '']),
+      },
+    ],
+    filename,
+  )
+}
+
+export function downloadProjectFile(text: string, filename = 'wiring-diagram.json') {
+  downloadBlob(new Blob([text], { type: 'application/json;charset=utf-8' }), filename)
 }
 
 export function exportWireListCsv(wires: Wire[], filename = 'wire-list.csv') {
