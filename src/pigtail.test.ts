@@ -169,3 +169,23 @@ describe('pigtail connectors', () => {
     expect(parsed.wires?.[0]?.shield_pin).toBe('4')
   })
 })
+
+describe('DXF export', () => {
+  it('writes a well-formed R12 file without entities R12 cannot read', () => {
+    const scene = computeScene([pigtail()], shielded, OPTIONS)
+    const dxf = sceneToDxf(scene)
+    const lines = dxf.split('\n')
+    expect(lines.pop()).toBe('')
+    expect(lines.length % 2).toBe(0)
+    for (let i = 0; i < lines.length; i += 2) {
+      expect(lines[i]).toMatch(/^\d+$/)
+    }
+    expect(dxf).toContain('AC1009')
+    expect(dxf.endsWith('0\nEOF\n')).toBe(true)
+    expect(dxf).not.toContain('LWPOLYLINE')
+    expect(dxf).not.toMatch(/\d[eE][-+]?\d/)
+    expect(dxf).not.toMatch(/NaN|Infinity|undefined/)
+    expect(dxf).toContain('SEQEND')
+    expect(dxf).toContain('LTYPE')
+  })
+})
